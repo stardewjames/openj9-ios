@@ -189,15 +189,19 @@ static NSError *OJ9JavaException(JNIEnv *env) {
 - (void)javaThreadMain {
     pthread_setname_np("OpenJ9 Java");
     NSString *home = _configuration.javaHome;
+    NSString *vmLibrary = nil;
     if (!home) {
         Dl_info info = {0};
         if (dladdr((const void *)&JNI_CreateJavaVM, &info) && info.dli_fname) {
-            home = [[NSString stringWithUTF8String:info.dli_fname].stringByDeletingLastPathComponent
+            vmLibrary = [NSString stringWithUTF8String:info.dli_fname];
+            home = [vmLibrary.stringByDeletingLastPathComponent
                     stringByAppendingPathComponent:@"javahome"];
         }
     }
     if (!home || ![[NSFileManager defaultManager] fileExistsAtPath:[home stringByAppendingPathComponent:@"lib/modules"]]) {
-        _startupError = OJ9Error(-1, @"javaHome must contain lib/modules (normally jvm.framework/javahome).");
+        _startupError = OJ9Error(-1, [NSString stringWithFormat:
+            @"Java home %@ has no lib/modules (JNI library: %@). Expected jvm.framework/javahome.",
+            home ?: @"<unresolved>", vmLibrary ?: @"<not resolved>"]);
         dispatch_semaphore_signal(_started);
         return;
     }
