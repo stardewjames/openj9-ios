@@ -21,13 +21,14 @@ concurrency:
 
 jobs:
   jdk:
-    name: jdk (${{ matrix.sdk }})
+    name: jdk (${{ matrix.sdk }}, ${{ matrix.desktop }})
     runs-on: macos-15
     timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
         sdk: [iphonesimulator, iphoneos]
+        desktop: [headless, core]
     steps:
       - uses: actions/checkout@v4
 
@@ -45,9 +46,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: work/ccache
-          key: ccache-${{ matrix.sdk }}-${{ hashFiles('sources.env', 'patches/*.patch') }}-${{ github.run_id }}
+          key: ccache-${{ matrix.sdk }}-${{ matrix.desktop }}-${{ hashFiles('sources.env', 'patches/*.patch') }}-${{ github.run_id }}
           restore-keys: |
-            ccache-${{ matrix.sdk }}-${{ hashFiles('sources.env', 'patches/*.patch') }}-
+            ccache-${{ matrix.sdk }}-${{ matrix.desktop }}-${{ hashFiles('sources.env', 'patches/*.patch') }}-
             ccache-${{ matrix.sdk }}-
 
       - name: Configure and build
@@ -56,24 +57,24 @@ jobs:
           CCACHE_MAXSIZE: 3G
           CCACHE_COMPRESS: '1'
         run: |
-          if [[ "${{ inputs.configure_only }}" == "true" ]]; then
-            scripts/build-jdk.sh ${{ matrix.sdk }} --configure-only
-          else
-            scripts/build-jdk.sh ${{ matrix.sdk }}
-          fi
+          args=()
+          [[ "${{ matrix.desktop }}" != core ]] || args+=(--disable-java-desktop)
+          [[ "${{ inputs.configure_only }}" != true ]] || args+=(--configure-only)
+          scripts/build-jdk.sh ${{ matrix.sdk }} "${args[@]}"
 
       - name: Save ccache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: work/ccache
-          key: ccache-${{ matrix.sdk }}-${{ hashFiles('sources.env', 'patches/*.patch') }}-${{ github.run_id }}
+          key: ccache-${{ matrix.sdk }}-${{ matrix.desktop }}-${{ hashFiles('sources.env', 'patches/*.patch') }}-${{ github.run_id }}
 
       - name: Collect failure logs
         if: failure()
         run: |
           mkdir -p logs
           conf=work/src/jdk/build/ios-${{ matrix.sdk }}
+          [[ "${{ matrix.desktop }}" != core ]] || conf="$conf-core"
           cp "$conf/config.log" logs/ 2>/dev/null || true
           cp "$conf/spec.gmk" logs/ 2>/dev/null || true
           cp "$conf/toolchain.cmake" logs/ 2>/dev/null || true
@@ -85,7 +86,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-${{ matrix.sdk }}
+          name: logs-${{ matrix.sdk }}-${{ matrix.desktop }}
           path: logs
           if-no-files-found: ignore
 
@@ -93,14 +94,19 @@ jobs:
         if: ${{ !inputs.configure_only }}
         uses: actions/upload-artifact@v4
         with:
-          name: jmods-${{ matrix.sdk }}
-          path: work/src/jdk/build/ios-${{ matrix.sdk }}/images/jmods
+          name: jmods-${{ matrix.sdk }}-${{ matrix.desktop }}
+          path: work/src/jdk/build/ios-${{ matrix.sdk }}${{ matrix.desktop == 'core' && '-core' || '' }}/images/jmods
           if-no-files-found: error
 
   package:
     needs: jdk
     if: ${{ !inputs.configure_only }}
     runs-on: macos-15
+    name: package (${{ matrix.desktop }})
+    strategy:
+      fail-fast: false
+      matrix:
+        desktop: [headless, core]
     permissions:
       contents: write
     timeout-minutes: 90
@@ -112,11 +118,11 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: jmods-iphoneos
+          name: jmods-iphoneos-${{ matrix.desktop }}
           path: work/jmods/iphoneos
       - uses: actions/download-artifact@v4
         with:
-          name: jmods-iphonesimulator
+          name: jmods-iphonesimulator-${{ matrix.desktop }}
           path: work/jmods/iphonesimulator
 
       - name: Download build JDK (jlink)
@@ -150,13 +156,16 @@ jobs:
       - name: Simulator smoke test
         env:
           HOST_JAVA_HOME: ${{ env.SEMERU_HOME }}
-        run: scripts/smoke-test-simulator.sh --out work/smoke
+        run: |
+          args=()
+          [[ "${{ matrix.desktop }}" != core ]] || args+=(--disable-java-desktop)
+          scripts/smoke-test-simulator.sh --out work/smoke "${args[@]}"
 
       - name: Upload XCFrameworks
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: OpenJ9-iOS-xcframeworks
+          name: OpenJ9-iOS-${{ matrix.desktop }}-xcframeworks
           path: |
             Artifacts/XCFrameworks/*.zip
             Artifacts/XCFrameworks/checksums.txt
@@ -167,12 +176,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-logs
+          name: smoke-logs-${{ matrix.desktop }}
           path: work/smoke
           if-no-files-found: ignore
 
       - name: Publish release
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' && matrix.desktop == 'headless'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

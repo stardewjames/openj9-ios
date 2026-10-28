@@ -10,15 +10,6 @@ import java.util.concurrent.*;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
 import java.util.zip.*;
-import java.awt.Color;
-import java.awt.Font;
-import java.awt.Graphics2D;
-import java.awt.GraphicsEnvironment;
-import java.awt.HeadlessException;
-import java.awt.RenderingHints;
-import java.awt.font.TextLayout;
-import java.awt.image.BufferedImage;
-import javax.imageio.ImageIO;
 
 public final class HelloIOS {
     public record Greeting(String name, int number) {}
@@ -37,67 +28,6 @@ public final class HelloIOS {
         };
     }
 
-    private static void headlessDesktop() throws Exception {
-        check(GraphicsEnvironment.isHeadless(), "iOS must use headless AWT");
-        try {
-            GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
-            throw new AssertionError("headless runtime exposed a screen");
-        } catch (HeadlessException expected) {
-            // Screen operations are unavailable; off-screen rendering must still work.
-        }
-        BufferedImage image = new BufferedImage(320, 160, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = image.createGraphics();
-        try {
-            g.setColor(Color.WHITE);
-            g.fillRect(0, 0, 320, 160);
-            g.setColor(Color.RED);
-            g.fillRect(8, 8, 16, 16);
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            int baseline = 42;
-            for (String family : List.of("Serif", "SansSerif", "Monospaced", "Dialog", "DialogInput")) {
-                Font font = new Font(family, Font.BOLD | Font.ITALIC, 18);
-                check(font.canDisplay('A') && font.canDisplay('\u03a9'), family + " font coverage");
-                g.setFont(font);
-                g.setColor(Color.BLACK);
-                TextLayout layout = new TextLayout("OpenJ9 iOS \u03a9", font, g.getFontRenderContext());
-                check(layout.getAdvance() > 80 && layout.getAdvance() < 300, family + " text advance");
-                layout.draw(g, 32, baseline);
-                baseline += 23;
-            }
-            Font fileFont = Font.createFont(Font.TRUETYPE_FONT,
-                Path.of(System.getProperty("java.home"), "lib", "fonts", "DejaVuSans.ttf").toFile());
-            check(fileFont.getFamily(Locale.ROOT).equals("DejaVu Sans"), "file-backed font identity");
-            g.setClip(250, 8, 10, 10);
-            g.setColor(Color.BLUE);
-            g.fillRect(240, 0, 40, 40);
-        } finally {
-            g.dispose();
-        }
-        check(image.getRGB(12, 12) == Color.RED.getRGB(), "Java2D rectangle");
-        check(image.getRGB(252, 12) == Color.BLUE.getRGB()
-            && image.getRGB(245, 12) == Color.WHITE.getRGB(), "Java2D clipping");
-        boolean ink = false;
-        for (int y = 25; y < 145; y++) {
-            for (int x = 32; x < 235; x++) ink |= image.getRGB(x, y) != Color.WHITE.getRGB();
-        }
-        check(ink, "font glyph rasterization produced no ink");
-        ByteArrayOutputStream png = new ByteArrayOutputStream();
-        check(ImageIO.write(image, "png", png), "PNG encoder unavailable");
-        BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(png.toByteArray()));
-        check(decoded.getWidth() == 320 && decoded.getHeight() == 160
-            && decoded.getRGB(12, 12) == Color.RED.getRGB(), "PNG dimensions/pixel round trip");
-        BufferedImage rgb = new BufferedImage(16, 16, BufferedImage.TYPE_INT_RGB);
-        Graphics2D jpegGraphics = rgb.createGraphics();
-        jpegGraphics.setColor(new Color(48, 96, 144));
-        jpegGraphics.fillRect(0, 0, 16, 16);
-        jpegGraphics.dispose();
-        ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
-        check(ImageIO.write(rgb, "jpeg", jpeg), "JPEG encoder unavailable");
-        Color sample = new Color(ImageIO.read(new ByteArrayInputStream(jpeg.toByteArray())).getRGB(8, 8));
-        check(Math.abs(sample.getRed() - 48) < 8 && Math.abs(sample.getGreen() - 96) < 8
-            && Math.abs(sample.getBlue() - 144) < 8, "JPEG colour round trip");
-        System.out.println("OPENJ9_IOS_HEADLESS_OK");
-    }
 
     public static void main(String[] args) throws Exception {
         try {
@@ -168,7 +98,25 @@ public final class HelloIOS {
                 System.err.print(trace);
             }
             check(nativeAdd(19, 23) == 42, "RegisterNatives host callback");
-            headlessDesktop();
+            boolean desktopExpected = args.length == 0 || args[0].equals("headless");
+            check(ModuleLayer.boot().findModule("java.desktop").isPresent() == desktopExpected,
+                  "java.desktop presence does not match the requested runtime variant");
+            if (desktopExpected) {
+                Class.forName("HeadlessDesktop").getMethod("run").invoke(null);
+            } else {
+                check(ModuleLayer.boot().findModule("java.datatransfer").isEmpty(), "core runtime includes data transfer");
+                for (String name : List.of("java.awt.Font", "javax.imageio.ImageIO", "javax.swing.JButton")) {
+                    try {
+                        Class.forName(name);
+                        throw new AssertionError("core runtime exposed " + name);
+                    } catch (ClassNotFoundException expected) {
+                        // These APIs must not be available in a core-only runtime.
+                    }
+                }
+                check(Files.notExists(Path.of(System.getProperty("java.home"), "lib", "fonts")),
+                      "core runtime contains bundled desktop fonts");
+                System.out.println("OPENJ9_IOS_CORE_ONLY_OK");
+            }
             Logger.getLogger("HelloIOS").info("java.util.logging smoke passed");
             System.out.println("OPENJ9_IOS_SMOKE_OK");
             System.out.flush();

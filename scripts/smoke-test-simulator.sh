@@ -5,8 +5,9 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT="$ROOT/build/smoke-simulator"
 TIMEOUT=600
+export OPENJ9_SMOKE_DESKTOP=headless
 usage() {
-    echo "Usage: $(basename "$0") [--out <log-and-build-dir>] [--timeout <seconds>]"
+    echo "Usage: $(basename "$0") [--disable-java-desktop] [--out <log-and-build-dir>] [--timeout <seconds>]"
     echo "Requires Xcode, XcodeGen, python3 and a host JDK 21 (HOST_JAVA_HOME or JAVA_HOME)."
     echo "First populate Artifacts/XCFrameworks and regenerate the local Package.swift."
 }
@@ -14,6 +15,7 @@ die() { echo "smoke-test-simulator.sh: $*" >&2; exit 1; }
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
+        --disable-java-desktop) export OPENJ9_SMOKE_DESKTOP=none; shift ;;
         --out|--timeout)
             [[ $# -ge 2 && -n "$2" ]] || die "$1 requires a value"
             if [[ "$1" == --out ]]; then OUT=$2; else TIMEOUT=$2; fi
@@ -95,10 +97,16 @@ xcrun simctl boot "$UDID"
 xcrun simctl bootstatus "$UDID" -b
 APP="$OUT/DerivedData/Build/Products/Debug-iphonesimulator/HelloJava.app"
 [[ -d "$APP" ]] || die "sample app not built: $APP"
+if [[ "$OPENJ9_SMOKE_DESKTOP" == none ]]; then
+    for stem in awt awt_headless fontmanager freetype javajpeg jsound lcms mlib_image; do
+        [[ ! -e "$APP/Frameworks/$stem.framework" ]] || die "core-only app embeds $stem.framework"
+    done
+    [[ ! -d "$APP/Frameworks/jvm.framework/javahome/lib/fonts" ]] || die "core-only app contains desktop fonts"
+fi
 xcrun simctl install "$UDID" "$APP"
 
 # Python supplies a real deadline on stock macOS (which has no GNU timeout).
-SIMCTL_CHILD_OPENJ9_SMOKE_EXIT=1 python3 - "$TIMEOUT" "$UDID" "$BUNDLE_ID" <<'PY' 2>&1 | tee "$LOG"
+SIMCTL_CHILD_OPENJ9_SMOKE_EXIT=1 SIMCTL_CHILD_OPENJ9_SMOKE_DESKTOP="$OPENJ9_SMOKE_DESKTOP" python3 - "$TIMEOUT" "$UDID" "$BUNDLE_ID" <<'PY' 2>&1 | tee "$LOG"
 import os, signal, subprocess, sys
 process = subprocess.Popen(['xcrun', 'simctl', 'launch', '--console-pty', '--terminate-running-process', sys.argv[2], sys.argv[3]], start_new_session=True)
 try:
@@ -114,6 +122,11 @@ except subprocess.TimeoutExpired:
     sys.exit(124)
 PY
 grep -q '^OPENJ9_IOS_SMOKE_OK' "$LOG" || die "success marker missing (see $LOG)"
+if [[ "$OPENJ9_SMOKE_DESKTOP" == none ]]; then
+    grep -q '^OPENJ9_IOS_CORE_ONLY_OK' "$LOG" || die "core-only marker missing"
+else
+    grep -q '^OPENJ9_IOS_HEADLESS_OK' "$LOG" || die "headless rendering marker missing"
+fi
 if grep -q 'OPENJ9_IOS_SMOKE_FAIL:' "$LOG"; then die "failure marker found (see $LOG)"; fi
 SUCCESS=1
 echo "OpenJ9 iOS simulator smoke passed; logs: $OUT"

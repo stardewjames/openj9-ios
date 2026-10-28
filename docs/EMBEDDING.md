@@ -24,6 +24,8 @@ bash scripts/generate-package.sh --frameworks-dir Artifacts/XCFrameworks
 
 `jli.framework` is retained for instrumentation's manifest reader. Its macOS JNI invocation wrappers are disabled on iOS, so they cannot shadow the real VM's `JNI_CreateJavaVM` entry point.
 
+For a smaller runtime, compile both SDKs with `scripts/build-jdk.sh <sdk> --disable-java-desktop` and package `work/src/jdk/build/ios-<sdk>-core/images/jmods`. This excludes desktop modules and their native code at compile time. Font installation is conditional on the linked font-manager library; core-only images do not fetch fonts. The generated Swift package includes only the libraries present in that variant, so consumers need no dummy AWT/framework dependencies or API changes. The core-only Simulator smoke option is `--disable-java-desktop`.
+
 `Package.swift` is generated, including its initial expected framework list. CI regenerates it from actual build outputs: do not manually retain targets that the build does not emit. In Xcode, choose **File > Add Package Dependencies > Add Local**, select the repository, and add the **OpenJ9** product to the app target. Swift imports `OpenJ9Kit`; Objective-C imports `<OpenJ9Kit/OpenJ9Kit.h>`. SwiftPM carries all binary-framework dependencies. Inspect the resulting app to ensure **every** runtime framework is embedded and signed by Xcode, not merely linked. The packaging scripts neither strip nor sign the binaries. Use your normal device development/distribution signing configuration.
 
 For a release, upload the generated individual `.xcframework.zip` archives, then generate remote binary targets:

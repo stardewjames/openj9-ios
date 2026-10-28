@@ -194,7 +194,6 @@ for module in ${MODULES_CSV//,/ }; do
 	fi
 done
 list_contains java.base "$SELECTED_MODULES" || die "java.base.jmod is missing from $JMODS"
-list_contains java.desktop "$SELECTED_MODULES" || die "headless java.desktop is required for this runtime"
 ADD_MODULES=$(echo $SELECTED_MODULES | tr ' ' ',')
 
 log "jlink ($SDK): $ADD_MODULES"
@@ -284,8 +283,10 @@ done < <(find "$IMAGE" \( -type f -o -type l \) -print0)
 list_contains jvm "$PACKAGED_STEMS" || die "the image has no libjvm.dylib outside lib/server and lib/j9vm (expected lib/default/libjvm.dylib)"
 [[ -f "$JAVAHOME/lib/modules" ]] || die "javahome is missing lib/modules"
 
-# Install licensed, file-backed TrueType fonts for the headless Java2D renderer.
-"$(cd "$(dirname "$0")" && pwd)/install-fonts.sh" "$JAVAHOME"
+# A core-only build has neither desktop natives nor font resources.
+if list_contains fontmanager "$PACKAGED_STEMS"; then
+	"$(cd "$(dirname "$0")" && pwd)/install-fonts.sh" "$JAVAHOME"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. frameworks

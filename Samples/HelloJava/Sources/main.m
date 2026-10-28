@@ -76,7 +76,8 @@ static jint JNICALL HelloNativeAdd(JNIEnv *env, jclass type, jint left, jint rig
             }
         }];
         if (!registered) { [self fail:@"Could not RegisterNatives for HelloIOS.nativeAdd"]; return; }
-        [self.vm runMainClass:@"HelloIOS" arguments:@[] completionQueue:dispatch_get_main_queue()
+        NSString *desktop = NSProcessInfo.processInfo.environment[@"OPENJ9_SMOKE_DESKTOP"] ?: @"headless";
+        [self.vm runMainClass:@"HelloIOS" arguments:@[desktop] completionQueue:dispatch_get_main_queue()
                   completion:^(int status, NSError *failure) {
             if (status) [self fail:failure.localizedDescription ?: @"main failed"];
         }];

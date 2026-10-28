@@ -36,7 +36,12 @@ targets:
           set -euo pipefail
           HOST_JAVA_HOME="${HOST_JAVA_HOME:-${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}}"
           mkdir -p "$DERIVED_FILE_DIR/java-classes"
-          "$HOST_JAVA_HOME/bin/javac" --release 21 -encoding UTF-8 -d "$DERIVED_FILE_DIR/java-classes" "$SRCROOT/java/src/HelloIOS.java"
+          "$HOST_JAVA_HOME/bin/javac" --release 21 --limit-modules java.base,java.logging -encoding UTF-8 -d "$DERIVED_FILE_DIR/java-classes" "$SRCROOT/java/src/HelloIOS.java"
+          if [[ "${OPENJ9_SMOKE_DESKTOP:-headless}" == headless ]]; then
+            "$HOST_JAVA_HOME/bin/javac" --release 21 -encoding UTF-8 -d "$DERIVED_FILE_DIR/java-classes" "$SRCROOT/java/src/HeadlessDesktop.java"
+          else
+            rm -f "$DERIVED_FILE_DIR/java-classes/HeadlessDesktop.class"
+          fi
           "$HOST_JAVA_HOME/bin/jar" --create --file "$DERIVED_FILE_DIR/HelloIOS.jar" -C "$DERIVED_FILE_DIR/java-classes" .
         basedOnDependencyAnalysis: false
     postBuildScripts:

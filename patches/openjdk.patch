@@ -319,16 +319,16 @@ index 3a9b54e6e9d4ed2b02d6d644b1f4dc4f777d4b24..b815b8efeb7e7a6f301816ee4db7702b
  	# Don't try searching for build tools in sysroot.
  	set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 diff --git a/closed/custom/common/Modules.gmk b/closed/custom/common/Modules.gmk
-index 6ef5ccd1dc8f07c570d32ff89cf886258886f5db..1cecb00074ef6a607bee40307d708d17032fa382 100644
+index 6ef5ccd1dc8f07c570d32ff89cf886258886f5db..5732337f77e8331b33d7da0c7d174ab16e8498aa 100644
 --- a/closed/custom/common/Modules.gmk
 +++ b/closed/custom/common/Modules.gmk
-@@ -50,6 +50,29 @@ MODULES_FILTER += \
+@@ -50,6 +50,32 @@ MODULES_FILTER += \
  	jdk.jstatd \
  	#
  
 +ifeq ($(OPENJDK_TARGET_OS_ENV), macosx.ios)
-+  # Keep software/headless java.desktop; omit native desktop integration,
-+  # console tools and modules that require launchers or unavailable devices.
++  # Omit native desktop integration, console tools and modules that require
++  # launchers or unavailable devices. Software java.desktop is optional.
 +  MODULES_FILTER += \
 +	java.se \
 +	java.smartcardio \
@@ -345,6 +345,9 @@ index 6ef5ccd1dc8f07c570d32ff89cf886258886f5db..1cecb00074ef6a607bee40307d708d17
 +	openj9.dtfjview \
 +	openj9.gpu \
 +	#
++  ifeq ($(ENABLE_JAVA_DESKTOP), false)
++    MODULES_FILTER += java.desktop java.datatransfer
++  endif
 +  BOOT_MODULES := $(filter-out $(MODULES_FILTER), $(BOOT_MODULES))
 +  PLATFORM_MODULES := $(filter-out $(MODULES_FILTER), $(PLATFORM_MODULES))
 +endif
@@ -669,10 +672,10 @@ index 373c3680f6460f9cd13b9666f81cb85715b33162..121d49e8dfd28a704ab4db1f91217d26
        MACHINE_FLAG="$MACHINE_FLAG -arch arm64"
      elif test "x$OPENJDK_TARGET_CPU" = xx86_64; then
 diff --git a/make/autoconf/jdk-options.m4 b/make/autoconf/jdk-options.m4
-index 087264464957e7d3e598794127e220140aa68e2b..a37eaa2af696a1c7ef2d08022e1115e5a2fbe5cb 100644
+index 087264464957e7d3e598794127e220140aa68e2b..a7f98f42f4a5fe3829a4cbee0fa0e753d76a9d21 100644
 --- a/make/autoconf/jdk-options.m4
 +++ b/make/autoconf/jdk-options.m4
-@@ -99,11 +99,19 @@ AC_DEFUN_ONCE([JDKOPT_SETUP_OPEN_OR_CUSTOM],
+@@ -99,13 +99,31 @@ AC_DEFUN_ONCE([JDKOPT_SETUP_OPEN_OR_CUSTOM],
  
  AC_DEFUN_ONCE([JDKOPT_SETUP_JDK_OPTIONS],
  [
@@ -693,7 +696,19 @@ index 087264464957e7d3e598794127e220140aa68e2b..a37eaa2af696a1c7ef2d08022e1115e5
 +  fi
    AC_SUBST(ENABLE_HEADLESS_ONLY)
  
++  UTIL_ARG_ENABLE(NAME: java-desktop, DEFAULT: true,
++      RESULT: ENABLE_JAVA_DESKTOP,
++      DESC: [build java.desktop and Java2D/font/image support (iOS)],
++      CHECKING_MSG: [if java.desktop should be built])
++  if test "x$ENABLE_JAVA_DESKTOP" = "xfalse" &&
++      test "x$OPENJDK_TARGET_OS_ENV" != "xmacosx.ios"; then
++    AC_MSG_ERROR([--disable-java-desktop is only supported for iOS])
++  fi
++  AC_SUBST(ENABLE_JAVA_DESKTOP)
++
    # should we linktime gc unused code sections in the JDK build ?
+   if test "x$OPENJDK_TARGET_OS" = "xlinux" && test "x$OPENJDK_TARGET_CPU" = xs390x; then
+     LINKTIME_GC_DEFAULT=true
 diff --git a/make/autoconf/lib-bundled.m4 b/make/autoconf/lib-bundled.m4
 index cefcb751587a98b53d03daa32bb1db0daf17c2d7..de79219f0ed7952c6baace4ac96dfaff09f6a442 100644
 --- a/make/autoconf/lib-bundled.m4
@@ -741,10 +756,18 @@ index 14de712b53950a8ea0c13e66141f290c0736fa43..04c3d23ff2795b3ef959da05a3ca0a07
        VAR_OS=bsd
        VAR_OS_TYPE=unix
 diff --git a/make/autoconf/spec.gmk.in b/make/autoconf/spec.gmk.in
-index 7f085676ca97bf2c2fed9fe04adb68023b9566ad..1ca56020817d6103bc52e128d55aa497a2b70d36 100644
+index 7f085676ca97bf2c2fed9fe04adb68023b9566ad..097f86f3eb3b54bf496c598fac8187c5610af4d4 100644
 --- a/make/autoconf/spec.gmk.in
 +++ b/make/autoconf/spec.gmk.in
-@@ -472,6 +472,14 @@ MACOSX_VERSION_MIN=@MACOSX_VERSION_MIN@
+@@ -330,6 +330,7 @@ USE_PRECOMPILED_HEADER := @USE_PRECOMPILED_HEADER@
+ 
+ # Only build headless support or not
+ ENABLE_HEADLESS_ONLY := @ENABLE_HEADLESS_ONLY@
++ENABLE_JAVA_DESKTOP := @ENABLE_JAVA_DESKTOP@
+ 
+ ENABLE_LINKTIME_GC := @ENABLE_LINKTIME_GC@
+ 
+@@ -472,6 +473,14 @@ MACOSX_VERSION_MIN=@MACOSX_VERSION_MIN@
  # The highest allowed version of macosx
  MACOSX_VERSION_MAX=@MACOSX_VERSION_MAX@
  

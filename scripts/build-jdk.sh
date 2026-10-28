@@ -1,27 +1,29 @@
 #!/usr/bin/env bash
 # Cross-compile OpenJDK 21 + OpenJ9 for iOS on an arm64 macOS host.
 #
-# Usage: scripts/build-jdk.sh <iphoneos|iphonesimulator> [--src <jdk dir>] [--configure-only] [-- <extra make targets>]
+# Usage: scripts/build-jdk.sh <iphoneos|iphonesimulator> [--disable-java-desktop] [--src <jdk dir>] [--configure-only] [-- <extra make targets>]
 # Requires: Xcode (iOS SDKs), autoconf, cmake, bash, make (GNU make 3.81+), optional ccache.
-# Produces: <jdk dir>/build/ios-<sdk>/images/jmods
+# Produces: <jdk dir>/build/ios-<sdk>[-core]/images/jmods
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=../sources.env
 source "$ROOT/sources.env"
 
-usage() { echo "usage: $0 <iphoneos|iphonesimulator> [--src <jdk dir>] [--configure-only] [-- make targets...]" >&2; exit 2; }
+usage() { echo "usage: $0 <iphoneos|iphonesimulator> [--disable-java-desktop] [--src <jdk dir>] [--configure-only] [-- make targets...]" >&2; exit 2; }
 
 SDK="${1:-}"; shift || true
 case "$SDK" in iphoneos|iphonesimulator) ;; *) usage ;; esac
 
 SRC="$ROOT/work/src/jdk"
 CONFIGURE_ONLY=0
+JAVA_DESKTOP=true
 MAKE_TARGETS=(jdk-image)
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--src) SRC="$(cd "$2" && pwd)"; shift 2 ;;
 		--configure-only) CONFIGURE_ONLY=1; shift ;;
+		--disable-java-desktop) JAVA_DESKTOP=false; shift ;;
 		--) shift; MAKE_TARGETS=("$@"); break ;;
 		*) usage ;;
 	esac
@@ -51,6 +53,7 @@ fi
 "$SEMERU_HOME/bin/java" -version
 
 CONF="ios-$SDK"
+[[ "$JAVA_DESKTOP" == true ]] || CONF="$CONF-core"
 CONFIGURE_ARGS=(
 	--openjdk-target=aarch64-apple-ios
 	--with-sdk-name="$SDK"
@@ -70,6 +73,7 @@ CONFIGURE_ARGS=(
 	--with-version-pre=
 	--with-version-opt=ios
 )
+[[ "$JAVA_DESKTOP" == true ]] || CONFIGURE_ARGS+=(--disable-java-desktop)
 if command -v ccache >/dev/null 2>&1; then
 	CONFIGURE_ARGS+=(--enable-ccache)
 fi
