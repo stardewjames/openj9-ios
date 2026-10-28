@@ -342,6 +342,31 @@ index 5b467cce7ee9c2bf6bcde7a1aca9a170336e750a..d5cb64663db287e166245910d637fcc6
  
  	result = mmap(address, (size_t)byteAmount, protectionFlags, flags, fd, 0);
  	if (MAP_FAILED == result) {
+diff --git a/port/unix/omrcpu.c b/port/unix/omrcpu.c
+index e5472da36d5ef36e70fdcfb3920ddbd9ff9300ec..4dd12dc0ec4294d64418dd7f7dda172adc5fb823 100644
+--- a/port/unix/omrcpu.c
++++ b/port/unix/omrcpu.c
+@@ -44,6 +44,9 @@
+ #include <sys/types.h>
+ #include <sys/sysctl.h>
+ #endif
++#if defined(OMR_OS_IOS)
++#include <libkern/OSCacheControl.h>
++#endif
+ 
+ /**
+  * PortLibrary startup.
+@@ -125,6 +128,10 @@ omrcpu_flush_icache(struct OMRPortLibrary *portLibrary, void *memoryPointer, uin
+ 	__asm__("sync");
+ 	__asm__("isync");
+ 
++#elif defined(OMR_OS_IOS)
++	/* Darwin exposes cache maintenance through libSystem, not compiler-rt's __clear_cache. */
++	sys_icache_invalidate(memoryPointer, byteAmount);
++
+ #elif defined(AARCH64) || defined(ARM) /* defined(LINUXPPC) || defined(PPC) || defined(RS6000) */
+ #if defined(__GNUC__)
+ 	// GCC built-in function
 diff --git a/port/unix/omrsignal.c b/port/unix/omrsignal.c
 index b4382d0179df2d212feb14b91aeab1a972d48dcc..59737262dcae26892d6a5d85e78a50919cc353bb 100644
 --- a/port/unix/omrsignal.c

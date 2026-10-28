@@ -215,6 +215,7 @@ static NSError *OJ9JavaException(JNIEnv *env) {
         [@"-Duser.dir=" stringByAppendingString:documents],
         [@"-Xdump:directory=" stringByAppendingString:NSTemporaryDirectory()],
         @"-Xshareclasses:none", @"-Dcom.ibm.tools.attach.enable=no", @"-Xint",
+        @"-Djava.awt.headless=true",
         [@"-Xmx" stringByAppendingString:_configuration.maxHeap],
         [@"-Xss" stringByAppendingString:_configuration.threadStackSize]
     ]];

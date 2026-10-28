@@ -141,7 +141,7 @@ Raw `options` are appended after the defaults, allowing normal JVM `-D`/`-X` con
 ## Runtime and distribution limits
 
 - Interpreter only: no JIT or AOT compilation and no executable-memory workaround. CPU-heavy Java can be much slower than on desktop OpenJ9.
-- No `java.desktop`, AWT, Swing, Java2D or sound. Modules depending on those are excluded.
+- Headless `java.desktop` uses software Java2D, image codecs and bundled DejaVu/FreeType fonts. Native AWT windows, screen capture and system printing are unavailable; headful APIs throw `HeadlessException`. Applications can supply additional TrueType fonts with `Font.createFont`.
 - No process spawning (`ProcessBuilder`, `Runtime.exec`, fork/exec, shell commands), attach tooling, shared class cache or desktop serviceability executables. Do not assume desktop agents, native libraries or filesystem layouts work unchanged.
 - All native libraries must be built for the exact iOS device/simulator platform and packaged/signed as frameworks. Do not copy desktop dylibs into the app. The simulator is not evidence of device API compatibility.
 - Heap size is not total footprint. Java/native stacks, class metadata, buffers and the runtime itself add memory; iOS jetsam can kill the app without a Java OutOfMemoryError. Start below the default heap (the sample uses 256 MiB), measure on your oldest supported devices, limit thread counts, and respond to memory/background lifecycle constraints.

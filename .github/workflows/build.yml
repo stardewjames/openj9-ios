@@ -148,7 +148,9 @@ jobs:
           scripts/generate-package.sh --frameworks-dir Artifacts/XCFrameworks
 
       - name: Simulator smoke test
-        run: scripts/smoke-test-simulator.sh
+        env:
+          HOST_JAVA_HOME: ${{ env.SEMERU_HOME }}
+        run: scripts/smoke-test-simulator.sh --out work/smoke
 
       - name: Upload XCFrameworks
         if: always()

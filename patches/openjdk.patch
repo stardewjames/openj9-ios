@@ -99,7 +99,7 @@ index a4ac37e1071031a066722d8b7a83554593dd328e..d2b3186de5687d6f469aee1faacdca7d
  
    ifneq ($(OPENJDK_TARGET_CPU), aarch64)
 diff --git a/closed/autoconf/ios-host-exec.sh b/closed/autoconf/ios-host-exec.sh
-new file mode 100755
+new file mode 100644
 index 0000000000000000000000000000000000000000..50c527c46b75071112170c5a9beec9a598bcaae5
 --- /dev/null
 +++ b/closed/autoconf/ios-host-exec.sh
@@ -319,19 +319,17 @@ index 3a9b54e6e9d4ed2b02d6d644b1f4dc4f777d4b24..b815b8efeb7e7a6f301816ee4db7702b
  	# Don't try searching for build tools in sysroot.
  	set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 diff --git a/closed/custom/common/Modules.gmk b/closed/custom/common/Modules.gmk
-index 6ef5ccd1dc8f07c570d32ff89cf886258886f5db..c3e62f45cec84fcd928b0b794a5dd1cf077f1d2b 100644
+index 6ef5ccd1dc8f07c570d32ff89cf886258886f5db..1cecb00074ef6a607bee40307d708d17032fa382 100644
 --- a/closed/custom/common/Modules.gmk
 +++ b/closed/custom/common/Modules.gmk
-@@ -50,6 +50,31 @@ MODULES_FILTER += \
+@@ -50,6 +50,29 @@ MODULES_FILTER += \
  	jdk.jstatd \
  	#
  
 +ifeq ($(OPENJDK_TARGET_OS_ENV), macosx.ios)
-+  # iOS has no AWT/Swing/Java2D/sound (AppKit), no terminal console and no
-+  # executables; leave out java.desktop, the modules that require it and
-+  # modules that only make sense with a launcher or a desktop.
++  # Keep software/headless java.desktop; omit native desktop integration,
++  # console tools and modules that require launchers or unavailable devices.
 +  MODULES_FILTER += \
-+	java.desktop \
 +	java.se \
 +	java.smartcardio \
 +	jdk.accessibility \
@@ -670,8 +668,49 @@ index 373c3680f6460f9cd13b9666f81cb85715b33162..121d49e8dfd28a704ab4db1f91217d26
      if test "x$OPENJDK_TARGET_CPU" = xaarch64; then
        MACHINE_FLAG="$MACHINE_FLAG -arch arm64"
      elif test "x$OPENJDK_TARGET_CPU" = xx86_64; then
+diff --git a/make/autoconf/jdk-options.m4 b/make/autoconf/jdk-options.m4
+index 087264464957e7d3e598794127e220140aa68e2b..a37eaa2af696a1c7ef2d08022e1115e5a2fbe5cb 100644
+--- a/make/autoconf/jdk-options.m4
++++ b/make/autoconf/jdk-options.m4
+@@ -99,11 +99,19 @@ AC_DEFUN_ONCE([JDKOPT_SETUP_OPEN_OR_CUSTOM],
+ 
+ AC_DEFUN_ONCE([JDKOPT_SETUP_JDK_OPTIONS],
+ [
+-  # Should we build a JDK without a graphical UI?
+-  UTIL_ARG_ENABLE(NAME: headless-only, DEFAULT: false,
++  # iOS only supports off-screen Java2D, never native AWT windows.
++  HEADLESS_ONLY_DEFAULT=false
++  if test "x$OPENJDK_TARGET_OS_ENV" = "xmacosx.ios"; then
++    HEADLESS_ONLY_DEFAULT=true
++  fi
++  UTIL_ARG_ENABLE(NAME: headless-only, DEFAULT: $HEADLESS_ONLY_DEFAULT,
+       RESULT: ENABLE_HEADLESS_ONLY,
+       DESC: [only build headless (no GUI) support],
+       CHECKING_MSG: [if we should build headless-only (no GUI)])
++  if test "x$OPENJDK_TARGET_OS_ENV" = "xmacosx.ios" &&
++      test "x$ENABLE_HEADLESS_ONLY" != "xtrue"; then
++    AC_MSG_ERROR([iOS requires --enable-headless-only])
++  fi
+   AC_SUBST(ENABLE_HEADLESS_ONLY)
+ 
+   # should we linktime gc unused code sections in the JDK build ?
+diff --git a/make/autoconf/lib-bundled.m4 b/make/autoconf/lib-bundled.m4
+index cefcb751587a98b53d03daa32bb1db0daf17c2d7..de79219f0ed7952c6baace4ac96dfaff09f6a442 100644
+--- a/make/autoconf/lib-bundled.m4
++++ b/make/autoconf/lib-bundled.m4
+@@ -291,6 +291,10 @@ AC_DEFUN_ONCE([LIB_SETUP_HARFBUZZ],
+   if test "x${with_harfbuzz}" = "x"; then
+     with_harfbuzz=${DEFAULT_HARFBUZZ}
+   fi
++  if test "x$OPENJDK_TARGET_OS_ENV" = "xmacosx.ios" &&
++      test "x$with_harfbuzz" != "xbundled"; then
++    AC_MSG_ERROR([iOS requires --with-harfbuzz=bundled])
++  fi
+ 
+   if test "x${with_harfbuzz}" = "xbundled"; then
+     USE_EXTERNAL_HARFBUZZ=false
 diff --git a/make/autoconf/libraries.m4 b/make/autoconf/libraries.m4
-index 51d4f724c339d94b6245fb63dd161cfbdae4a23d..fd64904b9450d3c00625a9aa463fd70eb4fa7c5b 100644
+index 51d4f724c339d94b6245fb63dd161cfbdae4a23d..acd899c7de6efe498a2351d67403f9a7c728c4db 100644
 --- a/make/autoconf/libraries.m4
 +++ b/make/autoconf/libraries.m4
 @@ -65,6 +65,9 @@ AC_DEFUN_ONCE([LIB_DETERMINE_DEPENDENCIES],
@@ -679,7 +718,7 @@ index 51d4f724c339d94b6245fb63dd161cfbdae4a23d..fd64904b9450d3c00625a9aa463fd70e
      # Windows have a separate print system
      NEEDS_LIB_CUPS=false
 +  elif test "x$OPENJDK_TARGET_OS_ENV" = "xmacosx.ios"; then
-+    # iOS has no cups and java.desktop is not built for iOS
++    # iOS has software Java2D but no native printing system.
 +    NEEDS_LIB_CUPS=false
    else
      NEEDS_LIB_CUPS=true
@@ -942,6 +981,229 @@ index d931eff54ab525de3cb7be5e877f84c4e0197d43..70f5fc221b73c5b88a6fe68a4f506af0
      LIBS_windows := advapi32.lib comctl32.lib user32.lib, \
  ))
  
+diff --git a/make/modules/java.desktop/Lib.gmk b/make/modules/java.desktop/Lib.gmk
+index be1ac3f1fb8a203a8134531ba9539d2060b58d9f..384373ecded68293b1f8b548b78672d4580a9cc2 100644
+--- a/make/modules/java.desktop/Lib.gmk
++++ b/make/modules/java.desktop/Lib.gmk
+@@ -55,9 +55,23 @@ ifeq ($(call isTargetOs, aix), false)
+     LIBJSOUND_TOOLCHAIN := TOOLCHAIN_LINK_CXX
+   endif
+ 
++  LIBJSOUND_MACOSX_LIBS := -framework CoreAudio -framework CoreFoundation \
++      -framework CoreServices -framework AudioUnit \
++      -framework CoreMIDI -framework AudioToolbox $(LIBCXX)
++  ifeq ($(OPENJDK_TARGET_OS_ENV), macosx.ios)
++    # Retain shared JNI/device enumeration and pure Java codecs, but no
++    # native audio/MIDI devices or macOS-only CoreAudio implementation.
++    LIBJSOUND_CFLAGS := -DX_PLATFORM=X_MACOSX -DUSE_PORTS=FALSE \
++        -DUSE_DAUDIO=FALSE -DUSE_PLATFORM_MIDI_OUT=FALSE \
++        -DUSE_PLATFORM_MIDI_IN=FALSE
++    LIBJSOUND_EXCLUDE_SRC_PATTERNS := /macosx/ /unix/
++    LIBJSOUND_MACOSX_LIBS :=
++  endif
++
+   $(eval $(call SetupJdkLibrary, BUILD_LIBJSOUND, \
+       NAME := jsound, \
+       TOOLCHAIN := $(LIBJSOUND_TOOLCHAIN), \
++      EXCLUDE_SRC_PATTERNS := $(LIBJSOUND_EXCLUDE_SRC_PATTERNS), \
+       OPTIMIZATION := LOW, \
+       CFLAGS := $(CFLAGS_JDKLIB) \
+           $(LIBJSOUND_CFLAGS), \
+@@ -68,9 +82,7 @@ ifeq ($(call isTargetOs, aix), false)
+           $(call SET_SHARED_LIBRARY_ORIGIN), \
+       LIBS_unix := -ljava -ljvm, \
+       LIBS_linux := $(ALSA_LIBS), \
+-      LIBS_macosx := -framework CoreAudio -framework CoreFoundation \
+-          -framework CoreServices -framework AudioUnit \
+-          -framework CoreMIDI -framework AudioToolbox $(LIBCXX), \
++      LIBS_macosx := $(LIBJSOUND_MACOSX_LIBS), \
+       LIBS_windows := $(WIN_JAVA_LIB) advapi32.lib dsound.lib winmm.lib user32.lib ole32.lib, \
+   ))
+ 
+@@ -84,6 +96,7 @@ endif
+ # Create the macosx specific osxapp and osx libraries
+ 
+ ifeq ($(call isTargetOs, macosx), true)
++ifneq ($(OPENJDK_TARGET_OS_ENV), macosx.ios)
+ 
+   $(eval $(call SetupJdkLibrary, BUILD_LIBOSXAPP, \
+       NAME := osxapp, \
+@@ -139,3 +152,4 @@ ifeq ($(call isTargetOs, macosx), true)
+   $(BUILD_LIBOSX): $(call FindLib, java.base, java)
+ 
+ endif
++endif # macOS window-system libraries are not available on iOS
+diff --git a/make/modules/java.desktop/lib/Awt2dLibraries.gmk b/make/modules/java.desktop/lib/Awt2dLibraries.gmk
+index 3415754836d17cf587597cbd22c489ef170d40f1..6e738ea8223ea03bac168904c36d0097ee7fd03b 100644
+--- a/make/modules/java.desktop/lib/Awt2dLibraries.gmk
++++ b/make/modules/java.desktop/lib/Awt2dLibraries.gmk
+@@ -25,6 +25,10 @@
+ 
+ WIN_AWT_LIB := $(SUPPORT_OUTPUTDIR)/native/$(MODULE)/libawt/awt.lib
+ 
++# The iOS target uses the Unix software pipeline, not the macOS window system.
++IOS_HEADLESS := $(if $(filter macosx.ios, $(OPENJDK_TARGET_OS_ENV)),true,false)
++DESKTOP_MACOSX := $(if $(filter true, $(IOS_HEADLESS)),false,$(call isTargetOs, macosx))
++
+ LIBAWT_DEFAULT_HEADER_DIRS := \
+     common/awt/utility \
+     libawt/awt/image \
+@@ -81,7 +85,7 @@ ifeq ($(call isTargetOs, linux macosx aix), true)
+   LIBAWT_EXFILES += awt_Font.c CUPSfuncs.c fontpath.c X11Color.c
+ endif
+ 
+-ifeq ($(call isTargetOs, macosx), true)
++ifeq ($(DESKTOP_MACOSX), true)
+   LIBAWT_EXFILES += initIDs.c awt/image/cvutils/img_colors.c
+ endif
+ 
+@@ -110,6 +114,15 @@ LIBAWT_CFLAGS += -D__MEDIALIB_OLD_NAMES -D__USE_J2D_NAMES $(X_CFLAGS)
+ 
+ LIBAWT_CFLAGS += -DMLIB_NO_LIBSUNMATH
+ 
++LIBAWT_MACOSX_LIBS := -lmlib_image \
++    -framework Cocoa -framework OpenGL -framework Metal \
++    -framework JavaRuntimeSupport -framework ApplicationServices \
++    -framework AudioToolbox
++ifeq ($(IOS_HEADLESS), true)
++  LIBAWT_CFLAGS += -DHEADLESS
++  LIBAWT_MACOSX_LIBS := -lmlib_image
++endif
++
+ ifeq ($(call isTargetOs, windows), true)
+   LIBAWT_CFLAGS += -EHsc -DUNICODE -D_UNICODE
+   ifeq ($(call isTargetCpuBits, 64), true)
+@@ -155,13 +168,7 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBAWT, \
+     LIBS_unix := -ljvm -ljava $(LIBM), \
+     LIBS_linux :=  $(LIBDL), \
+     LIBS_aix := $(LIBDL),\
+-    LIBS_macosx := -lmlib_image \
+-        -framework Cocoa \
+-        -framework OpenGL \
+-        -framework Metal \
+-        -framework JavaRuntimeSupport \
+-        -framework ApplicationServices \
+-        -framework AudioToolbox, \
++    LIBS_macosx := $(LIBAWT_MACOSX_LIBS), \
+     LIBS_windows := kernel32.lib user32.lib gdi32.lib winspool.lib \
+         imm32.lib ole32.lib uuid.lib shell32.lib \
+         comdlg32.lib winmm.lib comctl32.lib shlwapi.lib \
+@@ -370,8 +377,8 @@ TARGETS += $(BUILD_LIBJAVAJPEG)
+ 
+ ################################################################################
+ 
+-# Mac and Windows only use the native AWT lib, do not build libawt_headless
+-ifeq ($(call isTargetOs, windows macosx), false)
++# iOS, like Unix, loads a separate software-only headless native toolkit.
++ifneq ($(filter true, $(IOS_HEADLESS) $(call isTargetOs, linux aix)), )
+ 
+   LIBAWT_HEADLESS_EXTRA_SRC := \
+       common/font \
+@@ -380,6 +387,11 @@ ifeq ($(call isTargetOs, windows macosx), false)
+       #
+ 
+   LIBAWT_HEADLESS_EXCLUDES := medialib
++  ifeq ($(IOS_HEADLESS), true)
++    # No font discovery, CUPS or OpenGL implementation belongs in this library.
++    LIBAWT_HEADLESS_EXCLUDES += opengl
++    LIBAWT_HEADLESS_EXCLUDE_FILES := fontpath.c awt_Font.c X11Color.c CUPSfuncs.c
++  endif
+ 
+   LIBAWT_HEADLESS_EXTRA_HEADER_DIRS := \
+       $(LIBAWT_DEFAULT_HEADER_DIRS) \
+@@ -395,6 +407,7 @@ ifeq ($(call isTargetOs, windows macosx), false)
+       NAME := awt_headless, \
+       EXTRA_SRC := $(LIBAWT_HEADLESS_EXTRA_SRC), \
+       EXCLUDES := $(LIBAWT_HEADLESS_EXCLUDES), \
++      EXCLUDE_FILES := $(LIBAWT_HEADLESS_EXCLUDE_FILES), \
+       OPTIMIZATION := LOW, \
+       CFLAGS := $(CFLAGS_JDKLIB) \
+           $(LIBAWT_HEADLESS_CFLAGS), \
+@@ -539,6 +552,16 @@ else
+       lcdglyph.c
+ endif
+ 
++LIBFONTMANAGER_MACOSX_LIBS := -lawt_lwawt -framework CoreText \
++    -framework CoreFoundation -framework CoreGraphics
++LIBFONTMANAGER_PLATFORM_EXCLUDES := AccelGlyphCache.c
++ifeq ($(IOS_HEADLESS), true)
++  LIBFONTMANAGER_EXTRA_SRC += common/font
++  LIBFONTMANAGER_EXCLUDE_SRC_PATTERNS := /macosx/
++  LIBFONTMANAGER_MACOSX_LIBS :=
++  LIBFONTMANAGER_PLATFORM_EXCLUDES :=
++endif
++
+ LIBFONTMANAGER_CFLAGS += $(X_CFLAGS) -DLE_STANDALONE -DHEADLESS
+ 
+ # LDFLAGS clarification:
+@@ -548,7 +571,7 @@ LIBFONTMANAGER_CFLAGS += $(X_CFLAGS) -DLE_STANDALONE -DHEADLESS
+ $(eval $(call SetupJdkLibrary, BUILD_LIBFONTMANAGER, \
+     NAME := fontmanager, \
+     EXCLUDE_FILES := $(LIBFONTMANAGER_EXCLUDE_FILES) \
+-        AccelGlyphCache.c, \
++        $(LIBFONTMANAGER_PLATFORM_EXCLUDES), \
+     TOOLCHAIN := TOOLCHAIN_LINK_CXX, \
+     CFLAGS := $(CFLAGS_JDKLIB) $(LIBFONTMANAGER_CFLAGS), \
+     CXXFLAGS := $(CXXFLAGS_JDKLIB) $(LIBFONTMANAGER_CFLAGS), \
+@@ -556,6 +579,7 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBFONTMANAGER, \
+     CFLAGS_windows = -DCC_NOEX, \
+     EXTRA_HEADER_DIRS := $(LIBFONTMANAGER_EXTRA_HEADER_DIRS), \
+     EXTRA_SRC := $(LIBFONTMANAGER_EXTRA_SRC), \
++    EXCLUDE_SRC_PATTERNS := $(LIBFONTMANAGER_EXCLUDE_SRC_PATTERNS), \
+     WARNINGS_AS_ERRORS_xlc := false, \
+     DISABLED_WARNINGS_gcc := $(HARFBUZZ_DISABLED_WARNINGS_gcc), \
+     DISABLED_WARNINGS_CXX_gcc := $(HARFBUZZ_DISABLED_WARNINGS_CXX_gcc), \
+@@ -568,14 +592,14 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBFONTMANAGER, \
+     LDFLAGS_aix := -Wl$(COMMA)-berok, \
+     LIBS := $(BUILD_LIBFONTMANAGER_FONTLIB), \
+     LIBS_unix := -lawt -ljava -ljvm $(LIBM) $(LIBCXX), \
+-    LIBS_macosx := -lawt_lwawt -framework CoreText -framework CoreFoundation -framework CoreGraphics, \
++    LIBS_macosx := $(LIBFONTMANAGER_MACOSX_LIBS), \
+     LIBS_windows := $(WIN_JAVA_LIB) advapi32.lib user32.lib gdi32.lib \
+         $(WIN_AWT_LIB), \
+ ))
+ 
+ $(BUILD_LIBFONTMANAGER): $(BUILD_LIBAWT)
+ 
+-ifeq ($(call isTargetOs, macosx), true)
++ifeq ($(DESKTOP_MACOSX), true)
+   $(BUILD_LIBFONTMANAGER): $(call FindLib, $(MODULE), awt_lwawt)
+ endif
+ 
+@@ -586,6 +610,7 @@ endif
+ TARGETS += $(BUILD_LIBFONTMANAGER)
+ 
+ ################################################################################
++ifneq ($(IOS_HEADLESS), true)
+ 
+ ifeq ($(call isTargetOs, windows), true)
+ 
+@@ -680,6 +705,7 @@ else # not windows
+ endif
+ 
+ TARGETS += $(BUILD_LIBJAWT)
++endif # not iOS: JAWT exposes native window surfaces
+ 
+ ################################################################################
+ 
+@@ -831,7 +857,7 @@ endif
+ 
+ ################################################################################
+ 
+-ifeq ($(call isTargetOs, macosx), true)
++ifeq ($(DESKTOP_MACOSX), true)
+ 
+   LIBAWT_LWAWT_EXTRA_SRC := \
+       $(TOPDIR)/src/$(MODULE)/unix/native/common/awt \
+@@ -911,7 +937,7 @@ endif
+ 
+ ################################################################################
+ 
+-ifeq ($(call isTargetOs, macosx), true)
++ifeq ($(DESKTOP_MACOSX), true)
+   SHADERS_SRC := $(TOPDIR)/src/java.desktop/macosx/native/libawt_lwawt/java2d/metal/shaders.metal
+   SHADERS_SUPPORT_DIR := $(SUPPORT_OUTPUTDIR)/native/java.desktop/libosxui
+   SHADERS_AIR := $(SHADERS_SUPPORT_DIR)/shaders.air
 diff --git a/make/modules/java.instrument/Lib.gmk b/make/modules/java.instrument/Lib.gmk
 index ae985b3158fcf66090378490cff1fdee84031e16..127e99b417cbdc74ee4b5dd9100c9cdf93cf6526 100644
 --- a/make/modules/java.instrument/Lib.gmk
@@ -1266,6 +1528,706 @@ index 152fed27a1396058e11bea733b5e010cc3faa00b..cbbb6dcc9c302e673b58df88dea1f879
  #include <stdlib.h>
  #include <string.h>
  #include <sys/ioctl.h>
+diff --git a/src/java.desktop/macosx/classes/sun/awt/IOSGraphicsEnvironment.java b/src/java.desktop/macosx/classes/sun/awt/IOSGraphicsEnvironment.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..84186ff02ea773ecc80d9ffa89420bf20341ce70
+--- /dev/null
++++ b/src/java.desktop/macosx/classes/sun/awt/IOSGraphicsEnvironment.java
+@@ -0,0 +1,53 @@
++/*
++ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
++ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
++ *
++ * This code is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 only, as
++ * published by the Free Software Foundation. Oracle designates this
++ * particular file as subject to the "Classpath" exception as provided
++ * by Oracle in the LICENSE file that accompanied this code.
++ *
++ * This code is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
++ * version 2 for more details (a copy is included in the LICENSE file that
++ * accompanied this code).
++ *
++ * You should have received a copy of the GNU General Public License version
++ * 2 along with this work; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
++ *
++ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
++ * or visit www.oracle.com if you need additional information or have any
++ * questions.
++ */
++
++package sun.awt;
++
++import java.awt.GraphicsDevice;
++import java.awt.HeadlessException;
++import sun.java2d.SunGraphicsEnvironment;
++
++/** Software surfaces and file-backed fonts, without a native display backend. */
++final class IOSGraphicsEnvironment extends SunGraphicsEnvironment {
++    @Override
++    protected int getNumScreens() {
++        return 0;
++    }
++
++    @Override
++    protected GraphicsDevice makeScreenDevice(int screen) {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public GraphicsDevice getDefaultScreenDevice() {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public boolean isDisplayLocal() {
++        return false;
++    }
++}
+diff --git a/src/java.desktop/macosx/classes/sun/awt/IOSToolkit.java b/src/java.desktop/macosx/classes/sun/awt/IOSToolkit.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..7ad067bb87081d1024b848f761fa956e661ee6ac
+--- /dev/null
++++ b/src/java.desktop/macosx/classes/sun/awt/IOSToolkit.java
+@@ -0,0 +1,147 @@
++/*
++ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
++ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
++ *
++ * This code is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 only, as
++ * published by the Free Software Foundation. Oracle designates this
++ * particular file as subject to the "Classpath" exception as provided
++ * by Oracle in the LICENSE file that accompanied this code.
++ *
++ * This code is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
++ * version 2 for more details (a copy is included in the LICENSE file that
++ * accompanied this code).
++ *
++ * You should have received a copy of the GNU General Public License version
++ * 2 along with this work; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
++ *
++ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
++ * or visit www.oracle.com if you need additional information or have any
++ * questions.
++ */
++
++package sun.awt;
++
++import java.awt.Frame;
++import java.awt.HeadlessException;
++import java.awt.PrintJob;
++import java.awt.SystemTray;
++import java.awt.TrayIcon;
++import java.awt.Window;
++import java.awt.datatransfer.Clipboard;
++import java.awt.font.TextAttribute;
++import java.awt.im.InputMethodHighlight;
++import java.awt.im.spi.InputMethodDescriptor;
++import java.awt.image.ColorModel;
++import java.awt.peer.FramePeer;
++import java.awt.peer.KeyboardFocusManagerPeer;
++import java.awt.peer.SystemTrayPeer;
++import java.awt.peer.TrayIconPeer;
++import java.util.Locale;
++import java.util.Map;
++import java.util.Properties;
++
++/**
++ * The non-GUI delegate of HeadlessToolkit on iOS. SunToolkit supplies actual
++ * software image loading, FontDesignMetrics, AppContext event queues and event
++ * listeners. No macOS toolkit, run loop, display or input device is initialized.
++ */
++final class IOSToolkit extends SunToolkit {
++    @Override
++    public int getScreenResolution() {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public ColorModel getColorModel() {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public void sync() {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public void beep() {
++        System.out.write(0x07);
++    }
++
++    @Override
++    public Clipboard getSystemClipboard() {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public PrintJob getPrintJob(Frame frame, String title, Properties props) {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public Map<TextAttribute, ?> mapInputMethodHighlight(InputMethodHighlight highlight) {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public FramePeer createLightweightFrame(LightweightFrame target) {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public TrayIconPeer createTrayIcon(TrayIcon target) {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public SystemTrayPeer createSystemTray(SystemTray target) {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public boolean isTraySupported() {
++        return false;
++    }
++
++    @Override
++    public KeyboardFocusManagerPeer getKeyboardFocusManagerPeer() {
++        throw new HeadlessException();
++    }
++
++    @Override
++    protected boolean syncNativeQueue(long timeout) {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public void grab(Window window) {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public void ungrab(Window window) {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public boolean isDesktopSupported() {
++        return false;
++    }
++
++    @Override
++    public boolean isTaskbarSupported() {
++        return false;
++    }
++
++    @Override
++    public InputMethodDescriptor getInputMethodAdapterDescriptor() {
++        throw new HeadlessException();
++    }
++
++    @Override
++    public Locale getDefaultKeyboardLocale() {
++        throw new HeadlessException();
++    }
++}
+diff --git a/src/java.desktop/macosx/classes/sun/awt/PlatformGraphicsInfo.java b/src/java.desktop/macosx/classes/sun/awt/PlatformGraphicsInfo.java
+index 796dee199ad0172a539b0f7b02af7d95a9b3f199..0a5f724c257a549e6c7d667a49ea5f2a6d699f63 100644
+--- a/src/java.desktop/macosx/classes/sun/awt/PlatformGraphicsInfo.java
++++ b/src/java.desktop/macosx/classes/sun/awt/PlatformGraphicsInfo.java
+@@ -29,10 +29,15 @@ import java.awt.GraphicsEnvironment;
+ import java.awt.Toolkit;
+ import java.security.AccessController;
+ import java.security.PrivilegedAction;
++import sun.security.action.GetPropertyAction;
+ 
+ @SuppressWarnings("removal")
+ public class PlatformGraphicsInfo {
+ 
++    public static boolean isIOS() {
++        return "iOS".equals(GetPropertyAction.privilegedGetProperty("os.name"));
++    }
++
+     static {
+         AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
+             System.loadLibrary("awt");
+@@ -41,10 +46,16 @@ public class PlatformGraphicsInfo {
+     }
+ 
+     public static GraphicsEnvironment createGE() {
++        if (isIOS()) {
++            return new IOSGraphicsEnvironment();
++        }
+         return new CGraphicsEnvironment();
+     }
+ 
+     public static Toolkit createToolkit() {
++        if (isIOS()) {
++            return new HeadlessToolkit(new IOSToolkit());
++        }
+         return new sun.lwawt.macosx.LWCToolkit();
+     }
+ 
+@@ -56,7 +67,7 @@ public class PlatformGraphicsInfo {
+     public static native boolean isInAquaSession();
+ 
+     public static boolean getDefaultHeadlessProperty() {
+-         return !isInAquaSession();
++         return isIOS() || !isInAquaSession();
+     }
+ 
+     /*
+diff --git a/src/java.desktop/share/classes/java/awt/GraphicsEnvironment.java b/src/java.desktop/share/classes/java/awt/GraphicsEnvironment.java
+index 2e89aa6f6723b5961acb24f592cfa12e76722dac..013e0368d39305a9ce5ae0ab054ca07cd502144e 100644
+--- a/src/java.desktop/share/classes/java/awt/GraphicsEnvironment.java
++++ b/src/java.desktop/share/classes/java/awt/GraphicsEnvironment.java
+@@ -143,7 +143,11 @@ public abstract class GraphicsEnvironment {
+             AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
+                 String nm = System.getProperty("java.awt.headless");
+ 
+-                if (nm == null) {
++                // The iOS runtime has no window-system backend, even if an
++                // application requests -Djava.awt.headless=false.
++                if ("iOS".equals(System.getProperty("os.name"))) {
++                    headless = defaultHeadless = Boolean.TRUE;
++                } else if (nm == null) {
+                     headless = defaultHeadless =
+                         PlatformGraphicsInfo.getDefaultHeadlessProperty();
+                 } else {
+diff --git a/src/java.desktop/share/classes/sun/font/FontManagerFactory.java b/src/java.desktop/share/classes/sun/font/FontManagerFactory.java
+index fa634c68e0cceaea77e2b25bec9413fd679419b8..50eaec7840a3c1d49594cec4c7f91d9d79de0595 100644
+--- a/src/java.desktop/share/classes/sun/font/FontManagerFactory.java
++++ b/src/java.desktop/share/classes/sun/font/FontManagerFactory.java
+@@ -29,7 +29,7 @@ package sun.font;
+  * Factory class used to retrieve a valid FontManager instance for the current
+  * platform.
+  *
+- * A default implementation is given for Linux, Mac OS and Windows.
++ * A default implementation is given for Linux, Mac OS, Windows and headless iOS.
+  */
+ public final class FontManagerFactory {
+ 
+@@ -48,7 +48,9 @@ public final class FontManagerFactory {
+             synchronized (FontManagerFactory.class) {
+                 result = instance;
+                 if (result == null) {
+-                    instance = result = PlatformFontInfo.createFontManager();
++                    instance = result = FontUtilities.isIOS
++                            ? new IOSFontManager()
++                            : PlatformFontInfo.createFontManager();
+                 }
+             }
+         }
+diff --git a/src/java.desktop/share/classes/sun/font/FontUtilities.java b/src/java.desktop/share/classes/sun/font/FontUtilities.java
+index fe2e84d1a0ca9c37021e6d956cd96fd110e71261..b3af5cfdf969b66d2eb78eac7ed1bc1de8d72edc 100644
+--- a/src/java.desktop/share/classes/sun/font/FontUtilities.java
++++ b/src/java.desktop/share/classes/sun/font/FontUtilities.java
+@@ -42,6 +42,7 @@ import sun.util.logging.PlatformLogger;
+ public final class FontUtilities {
+ 
+     public static boolean isLinux;
++    public static boolean isIOS;
+ 
+     public static boolean isMacOSX;
+     public static boolean isMacOSX14;
+@@ -68,7 +69,10 @@ public final class FontUtilities {
+ 
+                 isLinux = OSInfo.getOSType() == OSInfo.OSType.LINUX;
+ 
+-                isMacOSX = OSInfo.getOSType() == OSInfo.OSType.MACOSX;
++                isIOS = "iOS".equals(System.getProperty("os.name"));
++                // iOS shares the macOS build, but must not use CFont/AppKit.
++                isMacOSX = !isIOS &&
++                        OSInfo.getOSType() == OSInfo.OSType.MACOSX;
+                 if (isMacOSX) {
+                     // os.version has values like 10.13.6, 10.14.6
+                     // If it is not positively recognised as 10.13 or less,
+@@ -95,11 +99,7 @@ public final class FontUtilities {
+                  * effect is that on Windows, 2D will never use GDI.
+                  */
+                 String scalerStr = System.getProperty("sun.java2d.font.scaler");
+-                if (scalerStr != null) {
+-                    useJDKScaler = "jdk".equals(scalerStr);
+-                } else {
+-                    useJDKScaler = false;
+-                }
++                useJDKScaler = isIOS || "jdk".equals(scalerStr);
+                 isWindows = OSInfo.getOSType() == OSInfo.OSType.WINDOWS;
+                 String debugLevel =
+                     System.getProperty("sun.java2d.debugfonts");
+diff --git a/src/java.desktop/share/classes/sun/font/IOSFontConfiguration.java b/src/java.desktop/share/classes/sun/font/IOSFontConfiguration.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..37703148a5849816a2b675502ab2c8dbf448435c
+--- /dev/null
++++ b/src/java.desktop/share/classes/sun/font/IOSFontConfiguration.java
+@@ -0,0 +1,225 @@
++/*
++ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
++ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
++ *
++ * This code is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 only, as
++ * published by the Free Software Foundation.  Oracle designates this
++ * particular file as subject to the "Classpath" exception as provided
++ * by Oracle in the LICENSE file that accompanied this code.
++ *
++ * This code is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++ * version 2 for more details (a copy is included in the LICENSE file that
++ * accompanied this code).
++ *
++ * You should have received a copy of the GNU General Public License version
++ * 2 along with this work; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
++ *
++ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
++ * or visit www.oracle.com if you need additional information or have any
++ * questions.
++ */
++
++package sun.font;
++
++import java.io.File;
++import java.nio.charset.Charset;
++import java.util.HashMap;
++import sun.awt.FontConfiguration;
++import sun.awt.FontDescriptor;
++
++import static java.nio.charset.StandardCharsets.UTF_16BE;
++
++/**
++ * Stable logical fonts for the headless iOS runtime. All twelve DejaVu faces
++ * must be packaged in java.home/lib/fonts. Dialog uses Sans and DialogInput
++ * uses Sans Mono; the other two families are fallback slots, not metric slots.
++ * Additional file fonts in lib/fonts/fallback follow the bundled faces, as in
++ * the shared font configuration. Applications can also use Font.createFont
++ * and GraphicsEnvironment.registerFont without involving native platform fonts.
++ */
++final class IOSFontConfiguration extends FontConfiguration {
++    // Family order matches the first three logical families in FontConfiguration.
++    private static final String[][] FACE_NAMES = {
++        { "DejaVu Serif", "DejaVu Serif Bold",
++          "DejaVu Serif Italic", "DejaVu Serif Bold Italic" },
++        { "DejaVu Sans", "DejaVu Sans Bold",
++          "DejaVu Sans Oblique", "DejaVu Sans Bold Oblique" },
++        { "DejaVu Sans Mono", "DejaVu Sans Mono Bold",
++          "DejaVu Sans Mono Oblique", "DejaVu Sans Mono Bold Oblique" }
++    };
++    private static final String[][] FILE_NAMES = {
++        { "DejaVuSerif.ttf", "DejaVuSerif-Bold.ttf",
++          "DejaVuSerif-Italic.ttf", "DejaVuSerif-BoldItalic.ttf" },
++        { "DejaVuSans.ttf", "DejaVuSans-Bold.ttf",
++          "DejaVuSans-Oblique.ttf", "DejaVuSans-BoldOblique.ttf" },
++        { "DejaVuSansMono.ttf", "DejaVuSansMono-Bold.ttf",
++          "DejaVuSansMono-Oblique.ttf", "DejaVuSansMono-BoldOblique.ttf" }
++    };
++    private static final int[] LOGICAL_FAMILIES = { 0, 1, 2, 1, 2 };
++    private boolean initialized;
++
++    IOSFontConfiguration(SunFontManager fm) {
++        super(fm);
++        init();
++    }
++
++    IOSFontConfiguration(SunFontManager fm, boolean preferLocaleFonts,
++                         boolean preferPropFonts) {
++        // The alternate superclass constructor requires binary fontconfig
++        // tables. This configuration supplies its descriptors directly, so
++        // initialize through the standard constructor instead.
++        super(fm);
++        this.preferLocaleFonts = preferLocaleFonts;
++        this.preferPropFonts = preferPropFonts;
++        init();
++    }
++
++    @Override
++    public synchronized boolean init() {
++        if (!initialized) {
++            setFontConfiguration();
++            getInstalledFallbackFonts(SunFontManager.jreLibDirName);
++            initialized = true;
++        }
++        return true;
++    }
++
++    private static String fontFile(int family, int style) {
++        return SunFontManager.getJDKFontDir() + File.separator + FILE_NAMES[family][style];
++    }
++
++    @Override
++    public boolean fontFilesArePresent() {
++        for (int family = 0; family < FILE_NAMES.length; family++) {
++            for (int style = 0; style < NUM_STYLES; style++) {
++                if (!new File(fontFile(family, style)).isFile()) {
++                    return false;
++                }
++            }
++        }
++        return true;
++    }
++
++    @Override
++    public String getVersion() {
++        return "1";
++    }
++
++    @Override
++    public int getNumberCoreFonts() {
++        return FACE_NAMES.length * NUM_STYLES;
++    }
++
++    @Override
++    public String[] getPlatformFontNames() {
++        String[] names = new String[getNumberCoreFonts()];
++        for (int family = 0; family < FACE_NAMES.length; family++) {
++            System.arraycopy(FACE_NAMES[family], 0, names,
++                             family * NUM_STYLES, NUM_STYLES);
++        }
++        return names;
++    }
++
++    @Override
++    public String getFileNameFromPlatformName(String platformName) {
++        for (int family = 0; family < FACE_NAMES.length; family++) {
++            for (int style = 0; style < NUM_STYLES; style++) {
++                if (FACE_NAMES[family][style].equals(platformName)) {
++                    return fontFile(family, style);
++                }
++            }
++        }
++        return null;
++    }
++
++    private CompositeFontDescriptor compositeDescriptor(int fontIndex, int style) {
++        int primary = LOGICAL_FAMILIES[fontIndex];
++        int fallbackCount = installedFallbackFontFiles == null
++                ? 0 : installedFallbackFontFiles.length;
++        String[] faces = new String[FACE_NAMES.length + fallbackCount];
++        String[] files = new String[faces.length];
++        faces[0] = FACE_NAMES[primary][style];
++        files[0] = fontFile(primary, style);
++        int slot = 1;
++        for (int family = 0; family < FACE_NAMES.length; family++) {
++            if (family != primary) {
++                faces[slot] = FACE_NAMES[family][style];
++                files[slot++] = fontFile(family, style);
++            }
++        }
++        if (fallbackCount != 0) {
++            System.arraycopy(installedFallbackFontFiles, 0,
++                             files, slot, fallbackCount);
++        }
++        return new CompositeFontDescriptor(
++                publicFontNames[fontIndex] + "." + styleNames[style],
++                1, faces, files, null, null);
++    }
++
++    @Override
++    public CompositeFontDescriptor[] get2DCompositeFontInfo() {
++        CompositeFontDescriptor[] descriptors =
++                new CompositeFontDescriptor[NUM_FONTS * NUM_STYLES];
++        for (int font = 0; font < NUM_FONTS; font++) {
++            for (int style = 0; style < NUM_STYLES; style++) {
++                descriptors[font * NUM_STYLES + style] = compositeDescriptor(font, style);
++            }
++        }
++        return descriptors;
++    }
++
++    @Override
++    protected FontDescriptor[] buildFontDescriptors(int fontIndex, int styleIndex) {
++        CompositeFontDescriptor composite = compositeDescriptor(fontIndex, styleIndex);
++        String[] faces = composite.getComponentFaceNames();
++        String[] files = composite.getComponentFileNames();
++        FontDescriptor[] descriptors = new FontDescriptor[faces.length];
++        for (int slot = 0; slot < faces.length; slot++) {
++            descriptors[slot] = new FontDescriptor(
++                    faces[slot] == null ? files[slot] : faces[slot],
++                    UTF_16BE.newEncoder(), new int[0]);
++        }
++        return descriptors;
++    }
++
++    @Override
++    public String getExtraFontPath() {
++        return null; // Only the bundled directory is searched by default.
++    }
++
++    @Override
++    protected String getFaceNameFromComponentFontName(String componentFontName) {
++        return componentFontName;
++    }
++
++    @Override
++    protected String getFileNameFromComponentFontName(String componentFontName) {
++        return getFileNameFromPlatformName(componentFontName);
++    }
++
++    @Override
++    public String getFallbackFamilyName(String fontName, String defaultFallback) {
++        String compatible = getCompatibilityFamilyName(fontName);
++        return compatible == null ? defaultFallback : compatible;
++    }
++
++    @Override
++    protected Charset getDefaultFontCharset(String fontName) {
++        return UTF_16BE;
++    }
++
++    @Override
++    protected String getEncoding(String awtFontName, String characterSubsetName) {
++        return UTF_16BE.name();
++    }
++
++    @Override
++    protected void initReorderMap() {
++        // The same bundled Unicode faces are used for every startup locale.
++        reorderMap = new HashMap<>();
++    }
++}
+diff --git a/src/java.desktop/share/classes/sun/font/IOSFontManager.java b/src/java.desktop/share/classes/sun/font/IOSFontManager.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..1e37b6a474e3de7555be73339307d0c7e8629ce8
+--- /dev/null
++++ b/src/java.desktop/share/classes/sun/font/IOSFontManager.java
+@@ -0,0 +1,60 @@
++/*
++ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
++ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
++ *
++ * This code is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 only, as
++ * published by the Free Software Foundation.  Oracle designates this
++ * particular file as subject to the "Classpath" exception as provided
++ * by Oracle in the LICENSE file that accompanied this code.
++ *
++ * This code is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++ * version 2 for more details (a copy is included in the LICENSE file that
++ * accompanied this code).
++ *
++ * You should have received a copy of the GNU General Public License version
++ * 2 along with this work; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
++ *
++ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
++ * or visit www.oracle.com if you need additional information or have any
++ * questions.
++ */
++
++package sun.font;
++
++import java.io.File;
++import sun.awt.FontConfiguration;
++
++/**
++ * File-backed font manager for headless iOS. Font registration, created fonts,
++ * strikes and shaping use the shared TrueType/FreeType/HarfBuzz implementation;
++ * no fonts are obtained from the native macOS font manager or iOS system paths.
++ */
++public final class IOSFontManager extends SunFontManager {
++    @Override
++    protected String getFontPath(boolean noType1Fonts) {
++        return getJDKFontDir();
++    }
++
++    @Override
++    protected String[] getDefaultPlatformFont() {
++        return new String[] {
++            "DejaVu Sans",
++            getJDKFontDir() + File.separator + "DejaVuSans.ttf"
++        };
++    }
++
++    @Override
++    protected FontConfiguration createFontConfiguration() {
++        return new IOSFontConfiguration(this);
++    }
++
++    @Override
++    public FontConfiguration createFontConfiguration(boolean preferLocaleFonts,
++                                                      boolean preferPropFonts) {
++        return new IOSFontConfiguration(this, preferLocaleFonts, preferPropFonts);
++    }
++}
+diff --git a/src/java.desktop/unix/native/libawt/awt/awt_LoadLibrary.c b/src/java.desktop/unix/native/libawt/awt/awt_LoadLibrary.c
+index b2dedca351c5fc9b6b56cc208fa1396e14df4766..4d738da75be186151ec3de9d7ce94abc42197267 100644
+--- a/src/java.desktop/unix/native/libawt/awt/awt_LoadLibrary.c
++++ b/src/java.desktop/unix/native/libawt/awt/awt_LoadLibrary.c
+@@ -35,6 +35,10 @@
+ #include <sys/param.h>
+ #include <sys/utsname.h>
+ 
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
++
+ #ifdef AIX
+ #include "porting_aix.h" /* For the 'dladdr' function. */
+ #endif
+@@ -116,6 +120,26 @@ AWT_OnLoad(JavaVM *vm, void *reserved)
+     }
+ 
+     jvm = vm;
++#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
++    /*
++     * System.loadLibrary uses the VM's iOS framework mapping. A sibling dylib
++     * path and dlopen would not work after signing these as separate frameworks.
++     */
++    if (awtHandle == NULL) {
++        jstring library = JNU_NewStringPlatform(env, "awt_headless");
++        if (library == NULL) {
++            return JNI_ERR;
++        }
++        JNU_CallStaticMethodByName(env, NULL, "java/lang/System", "loadLibrary",
++                                  "(Ljava/lang/String;)V", library);
++        (*env)->DeleteLocalRef(env, library);
++        if ((*env)->ExceptionCheck(env)) {
++            return JNI_ERR;
++        }
++        awtHandle = (void *)vm;
++    }
++    return JNI_VERSION_1_2;
++#endif
+ #ifndef STATIC_BUILD
+     /* Get address of this library and the directory containing it. */
+     dladdr((void *)AWT_OnLoad, &dlinfo);
+diff --git a/src/java.desktop/unix/native/libawt/awt/awt_Mlib.c b/src/java.desktop/unix/native/libawt/awt/awt_Mlib.c
+index c3ecec3380e21cee5348f2cdfa793bcfe272eac9..62b51ff1995be977ac9939acac41d394646b1041 100644
+--- a/src/java.desktop/unix/native/libawt/awt/awt_Mlib.c
++++ b/src/java.desktop/unix/native/libawt/awt/awt_Mlib.c
+@@ -36,14 +36,18 @@
+ #include "awt_Mlib.h"
+ #include "java_awt_image_BufferedImage.h"
+ 
+-#ifdef STATIC_BUILD
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
++
++#if defined(STATIC_BUILD) || (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+ #include "mlib_image.h"
+ #endif
+ 
+ static void start_timer(int numsec);
+ static void stop_timer(int numsec, int ntimes);
+ 
+-#ifdef STATIC_BUILD
++#if defined(STATIC_BUILD) || (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+ // Mapping functions to their names for runtime check
+ static mlibFnS_t sMlibFnsStatic[] = {
+     {j2d_mlib_ImageConvMxN, "j2d_mlib_ImageConvMxN"},
 diff --git a/src/java.security.jgss/share/classes/sun/security/krb5/Config.java b/src/java.security.jgss/share/classes/sun/security/krb5/Config.java
 index b5601b9bef1c9dda50ee5ad474e9734ec30b74a2..eb142502ac642835248bcb56e33e9bb9a147e2b8 100644
 --- a/src/java.security.jgss/share/classes/sun/security/krb5/Config.java

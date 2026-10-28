@@ -19,7 +19,7 @@ set -euo pipefail
 
 SCRIPT_NAME=$(basename "$0")
 
-DEFAULT_MODULES="java.base,java.compiler,java.datatransfer,java.instrument,java.logging,\
+DEFAULT_MODULES="java.base,java.compiler,java.datatransfer,java.desktop,java.instrument,java.logging,\
 java.management,java.management.rmi,java.naming,java.net.http,java.prefs,java.rmi,\
 java.scripting,java.security.jgss,java.security.sasl,java.sql,java.sql.rowset,\
 java.transaction.xa,java.xml,java.xml.crypto,jdk.charsets,jdk.crypto.cryptoki,\
@@ -194,6 +194,7 @@ for module in ${MODULES_CSV//,/ }; do
 	fi
 done
 list_contains java.base "$SELECTED_MODULES" || die "java.base.jmod is missing from $JMODS"
+list_contains java.desktop "$SELECTED_MODULES" || die "headless java.desktop is required for this runtime"
 ADD_MODULES=$(echo $SELECTED_MODULES | tr ' ' ',')
 
 log "jlink ($SDK): $ADD_MODULES"
@@ -205,11 +206,7 @@ JLINK_ARGS=(
 	--no-man-pages
 	--output "$IMAGE"
 )
-if ! "$JLINK" "${JLINK_ARGS[@]}" --compress=zip-6; then
-	warn "jlink --compress=zip-6 failed; retrying with the legacy spelling --compress=2"
-	rm -rf "$IMAGE"
-	"$JLINK" "${JLINK_ARGS[@]}" --compress=2 || die "jlink failed"
-fi
+"$JLINK" "${JLINK_ARGS[@]}" --compress=2 || die "jlink failed"
 [[ -f "$IMAGE/lib/modules" ]] || die "jlink image has no lib/modules"
 
 # ---------------------------------------------------------------------------
@@ -286,6 +283,9 @@ done < <(find "$IMAGE" \( -type f -o -type l \) -print0)
 
 list_contains jvm "$PACKAGED_STEMS" || die "the image has no libjvm.dylib outside lib/server and lib/j9vm (expected lib/default/libjvm.dylib)"
 [[ -f "$JAVAHOME/lib/modules" ]] || die "javahome is missing lib/modules"
+
+# Install licensed, file-backed TrueType fonts for the headless Java2D renderer.
+"$(cd "$(dirname "$0")" && pwd)/install-fonts.sh" "$JAVAHOME"
 
 # ---------------------------------------------------------------------------
 # 3. frameworks

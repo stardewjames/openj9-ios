@@ -47,7 +47,7 @@ Every native library is an individual framework. The real OpenJ9 VM is `jvm.fram
 ## Platform constraints
 
 - Interpreter only: JIT and AOT code generation are disabled, including when `-Xjit` is requested.
-- No `java.desktop` (AWT, Swing, Java2D, audio) or modules requiring it.
+- Headless `java.desktop`: software Java2D, image codecs and file-backed font rendering. No native AWT windows, screen capture or system printing.
 - No child processes, Attach API, shared-class cache or fork-based system dumps.
 - Java 21 Foreign Function & Memory upcall stubs require generated executable code and are unsupported. JNI and interpreted Java use static native code.
 - iOS owns application lifetime and background execution. A VM does not bypass suspension or jetsam; set a conservative heap maximum.
