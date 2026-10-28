@@ -1034,7 +1034,7 @@ index be1ac3f1fb8a203a8134531ba9539d2060b58d9f..384373ecded68293b1f8b548b78672d4
  endif
 +endif # macOS window-system libraries are not available on iOS
 diff --git a/make/modules/java.desktop/lib/Awt2dLibraries.gmk b/make/modules/java.desktop/lib/Awt2dLibraries.gmk
-index 3415754836d17cf587597cbd22c489ef170d40f1..de8883814b1d7ad327989886dd69ac6acb06d690 100644
+index 3415754836d17cf587597cbd22c489ef170d40f1..bfcc4b78e88067664ab6212777186757cfc02658 100644
 --- a/make/modules/java.desktop/lib/Awt2dLibraries.gmk
 +++ b/make/modules/java.desktop/lib/Awt2dLibraries.gmk
 @@ -25,6 +25,10 @@
@@ -1106,7 +1106,7 @@ index 3415754836d17cf587597cbd22c489ef170d40f1..de8883814b1d7ad327989886dd69ac6a
 +  ifeq ($(IOS_HEADLESS), true)
 +    # No font discovery, CUPS, X11 or OpenGL implementation belongs in this library.
 +    LIBAWT_HEADLESS_EXCLUDES += opengl x11
-+    LIBAWT_HEADLESS_EXCLUDE_FILES := fontpath.c awt_Font.c X11Color.c CUPSfuncs.c
++    LIBAWT_HEADLESS_EXCLUDE_FILES := fontpath.c X11Color.c CUPSfuncs.c
 +  endif
  
    LIBAWT_HEADLESS_EXTRA_HEADER_DIRS := \
