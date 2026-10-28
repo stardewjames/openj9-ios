@@ -1034,7 +1034,7 @@ index be1ac3f1fb8a203a8134531ba9539d2060b58d9f..384373ecded68293b1f8b548b78672d4
  endif
 +endif # macOS window-system libraries are not available on iOS
 diff --git a/make/modules/java.desktop/lib/Awt2dLibraries.gmk b/make/modules/java.desktop/lib/Awt2dLibraries.gmk
-index 3415754836d17cf587597cbd22c489ef170d40f1..5a821838ab995c8de1ef1c76ec4b4347e0ce3e3b 100644
+index 3415754836d17cf587597cbd22c489ef170d40f1..de8883814b1d7ad327989886dd69ac6acb06d690 100644
 --- a/make/modules/java.desktop/lib/Awt2dLibraries.gmk
 +++ b/make/modules/java.desktop/lib/Awt2dLibraries.gmk
 @@ -25,6 +25,10 @@
@@ -1119,7 +1119,7 @@ index 3415754836d17cf587597cbd22c489ef170d40f1..5a821838ab995c8de1ef1c76ec4b4347
        OPTIMIZATION := LOW, \
        CFLAGS := $(CFLAGS_JDKLIB) \
            $(LIBAWT_HEADLESS_CFLAGS), \
-@@ -539,6 +552,16 @@ else
+@@ -539,6 +552,17 @@ else
        lcdglyph.c
  endif
  
@@ -1128,6 +1128,7 @@ index 3415754836d17cf587597cbd22c489ef170d40f1..5a821838ab995c8de1ef1c76ec4b4347
 +LIBFONTMANAGER_PLATFORM_EXCLUDES := AccelGlyphCache.c
 +ifeq ($(IOS_HEADLESS), true)
 +  LIBFONTMANAGER_EXTRA_SRC += common/font
++  LIBFONTMANAGER_EXTRA_HEADER_DIRS += common/awt/debug
 +  LIBFONTMANAGER_EXCLUDE_SRC_PATTERNS := /macosx/
 +  LIBFONTMANAGER_MACOSX_LIBS :=
 +  LIBFONTMANAGER_PLATFORM_EXCLUDES :=
@@ -1136,7 +1137,7 @@ index 3415754836d17cf587597cbd22c489ef170d40f1..5a821838ab995c8de1ef1c76ec4b4347
  LIBFONTMANAGER_CFLAGS += $(X_CFLAGS) -DLE_STANDALONE -DHEADLESS
  
  # LDFLAGS clarification:
-@@ -548,7 +571,7 @@ LIBFONTMANAGER_CFLAGS += $(X_CFLAGS) -DLE_STANDALONE -DHEADLESS
+@@ -548,7 +572,7 @@ LIBFONTMANAGER_CFLAGS += $(X_CFLAGS) -DLE_STANDALONE -DHEADLESS
  $(eval $(call SetupJdkLibrary, BUILD_LIBFONTMANAGER, \
      NAME := fontmanager, \
      EXCLUDE_FILES := $(LIBFONTMANAGER_EXCLUDE_FILES) \
@@ -1145,7 +1146,7 @@ index 3415754836d17cf587597cbd22c489ef170d40f1..5a821838ab995c8de1ef1c76ec4b4347
      TOOLCHAIN := TOOLCHAIN_LINK_CXX, \
      CFLAGS := $(CFLAGS_JDKLIB) $(LIBFONTMANAGER_CFLAGS), \
      CXXFLAGS := $(CXXFLAGS_JDKLIB) $(LIBFONTMANAGER_CFLAGS), \
-@@ -556,6 +579,7 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBFONTMANAGER, \
+@@ -556,6 +580,7 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBFONTMANAGER, \
      CFLAGS_windows = -DCC_NOEX, \
      EXTRA_HEADER_DIRS := $(LIBFONTMANAGER_EXTRA_HEADER_DIRS), \
      EXTRA_SRC := $(LIBFONTMANAGER_EXTRA_SRC), \
@@ -1153,7 +1154,7 @@ index 3415754836d17cf587597cbd22c489ef170d40f1..5a821838ab995c8de1ef1c76ec4b4347
      WARNINGS_AS_ERRORS_xlc := false, \
      DISABLED_WARNINGS_gcc := $(HARFBUZZ_DISABLED_WARNINGS_gcc), \
      DISABLED_WARNINGS_CXX_gcc := $(HARFBUZZ_DISABLED_WARNINGS_CXX_gcc), \
-@@ -568,14 +592,14 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBFONTMANAGER, \
+@@ -568,14 +593,14 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBFONTMANAGER, \
      LDFLAGS_aix := -Wl$(COMMA)-berok, \
      LIBS := $(BUILD_LIBFONTMANAGER_FONTLIB), \
      LIBS_unix := -lawt -ljava -ljvm $(LIBM) $(LIBCXX), \
@@ -1170,7 +1171,7 @@ index 3415754836d17cf587597cbd22c489ef170d40f1..5a821838ab995c8de1ef1c76ec4b4347
    $(BUILD_LIBFONTMANAGER): $(call FindLib, $(MODULE), awt_lwawt)
  endif
  
-@@ -586,6 +610,7 @@ endif
+@@ -586,6 +611,7 @@ endif
  TARGETS += $(BUILD_LIBFONTMANAGER)
  
  ################################################################################
@@ -1178,7 +1179,7 @@ index 3415754836d17cf587597cbd22c489ef170d40f1..5a821838ab995c8de1ef1c76ec4b4347
  
  ifeq ($(call isTargetOs, windows), true)
  
-@@ -680,6 +705,7 @@ else # not windows
+@@ -680,6 +706,7 @@ else # not windows
  endif
  
  TARGETS += $(BUILD_LIBJAWT)
@@ -1186,7 +1187,7 @@ index 3415754836d17cf587597cbd22c489ef170d40f1..5a821838ab995c8de1ef1c76ec4b4347
  
  ################################################################################
  
-@@ -831,7 +857,7 @@ endif
+@@ -831,7 +858,7 @@ endif
  
  ################################################################################
  
@@ -1195,7 +1196,7 @@ index 3415754836d17cf587597cbd22c489ef170d40f1..5a821838ab995c8de1ef1c76ec4b4347
  
    LIBAWT_LWAWT_EXTRA_SRC := \
        $(TOPDIR)/src/$(MODULE)/unix/native/common/awt \
-@@ -911,7 +937,7 @@ endif
+@@ -911,7 +938,7 @@ endif
  
  ################################################################################
  
