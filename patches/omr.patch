@@ -1,0 +1,503 @@
+diff --git a/cmake/modules/OmrDetectSystemInformation.cmake b/cmake/modules/OmrDetectSystemInformation.cmake
+index 7d574e82b787661fe47242c144797da012c9e4d2..c64cbbd42591ed1c5a285f52b9dadc08d17e1f83 100644
+--- a/cmake/modules/OmrDetectSystemInformation.cmake
++++ b/cmake/modules/OmrDetectSystemInformation.cmake
+@@ -163,6 +163,11 @@ macro(omr_detect_system_information)
+ 	elseif(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+ 		set(OMR_HOST_OS "osx")
+ 		set(OMR_OS_OSX TRUE)
++	elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
++		# iOS reuses the osx port sources; OMR_OS_IOS selects iOS-specific behaviour.
++		set(OMR_HOST_OS "osx")
++		set(OMR_OS_OSX TRUE)
++		set(OMR_OS_IOS TRUE)
+ 	elseif(CMAKE_SYSTEM_NAME MATCHES "Windows")
+ 		set(OMR_HOST_OS "win")
+ 		set(OMR_OS_WINDOWS TRUE)
+diff --git a/cmake/modules/platform/os/osx.cmake b/cmake/modules/platform/os/osx.cmake
+index 45520337e22a39fca690810d680d1cdf35a2701d..beb180360e7735bbd543b07e4edb514d4f6693da 100644
+--- a/cmake/modules/platform/os/osx.cmake
++++ b/cmake/modules/platform/os/osx.cmake
+@@ -29,6 +29,11 @@ list(APPEND OMR_PLATFORM_DEFINITIONS
+ # the distinction
+ list(APPEND TR_COMPILE_DEFINITIONS -DSUPPORTS_THREAD_LOCAL -DOSX)
+ 
++if(OMR_OS_IOS)
++	list(APPEND OMR_PLATFORM_DEFINITIONS -DOMR_OS_IOS)
++	list(APPEND TR_COMPILE_DEFINITIONS -DOMR_OS_IOS)
++endif()
++
+ if(OMR_ENV_DATA64 AND NOT OMR_ARCH_AARCH64)
+ 	# Set page zero size to 16KB for mapping memory below 4GB.
+ 	list(APPEND OMR_PLATFORM_EXE_LINKER_OPTIONS
+diff --git a/include_core/omriosframework.h b/include_core/omriosframework.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..efe4c8f9169334f1427e1b11a3859845964e3cad
+--- /dev/null
++++ b/include_core/omriosframework.h
+@@ -0,0 +1,109 @@
++/*******************************************************************************
++ * Copyright IBM Corp. and others 2026
++ *
++ * This program and the accompanying materials are made available under
++ * the terms of the Eclipse Public License 2.0 which accompanies this
++ * distribution and is available at https://www.eclipse.org/legal/epl-2.0/
++ * or the Apache License, Version 2.0 which accompanies this distribution and
++ * is available at https://www.apache.org/licenses/LICENSE-2.0.
++ *
++ * This Source Code may also be made available under the following
++ * Secondary Licenses when the conditions for such availability set
++ * forth in the Eclipse Public License, v. 2.0 are satisfied: GNU
++ * General Public License, version 2 with the GNU Classpath
++ * Exception [1] and GNU General Public License, version 2 with the
++ * OpenJDK Assembly Exception [2].
++ *
++ * [1] https://www.gnu.org/software/classpath/license.html
++ * [2] https://openjdk.org/legal/assembly-exception.html
++ *
++ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0 OR GPL-2.0-only WITH OpenJDK-assembly-exception-1.0
++ *******************************************************************************/
++
++#if !defined(OMRIOSFRAMEWORK_H)
++#define OMRIOSFRAMEWORK_H
++
++/*
++ * iOS apps may only ship native code as frameworks, so every runtime library
++ * "libfoo.dylib" is packaged as "<Frameworks>/foo.framework/foo", where
++ * <Frameworks> is the directory holding the runtime's own frameworks.
++ *
++ * omr_ios_map_library_path() rewrites a library name or path to that location.
++ * It returns 1 and fills buf when the name has the form [dir/]libfoo.dylib,
++ * the named file does not exist, and the framework binary does exist;
++ * otherwise it returns 0. The output buffer may be modified on failure.
++ */
++#if defined(OMR_OS_IOS)
++
++#include <dlfcn.h>
++#include <stdio.h>
++#include <string.h>
++#include <unistd.h>
++
++static inline int
++omr_ios_map_library_path(const char *name, char *buf, size_t bufLen)
++{
++	static const char prefix[] = "lib";
++	static const char suffix[] = ".dylib";
++	const size_t prefixLen = sizeof(prefix) - 1;
++	const size_t suffixLen = sizeof(suffix) - 1;
++	const char *base = NULL;
++	size_t baseLen = 0;
++	size_t stemLen = 0;
++	Dl_info info;
++	const char *selfPath = NULL;
++	const char *end = NULL;
++	int dirLen = 0;
++	int written = 0;
++
++	if ((NULL == name) || (NULL == buf)) {
++		return 0;
++	}
++	base = strrchr(name, '/');
++	base = (NULL == base) ? name : base + 1;
++	baseLen = strlen(base);
++	if ((baseLen <= (prefixLen + suffixLen))
++		|| (0 != strncmp(base, prefix, prefixLen))
++		|| (0 != strcmp(base + baseLen - suffixLen, suffix))
++	) {
++		return 0;
++	}
++	if ((base != name) && (0 == access(name, F_OK))) {
++		/* An explicit path to an existing file is used as given. */
++		return 0;
++	}
++	stemLen = baseLen - prefixLen - suffixLen;
++
++	/* This code is inlined into a runtime framework binary: <Frameworks>/x.framework/x. */
++	if ((0 == dladdr((const void *)&omr_ios_map_library_path, &info)) || (NULL == info.dli_fname)) {
++		return 0;
++	}
++	selfPath = info.dli_fname;
++	end = strrchr(selfPath, '/');
++	while ((NULL != end) && (end > selfPath)) {
++		/* Walk up to the directory that contains the enclosing ".framework" directory. */
++		const char *dirStart = end - 1;
++		while ((dirStart > selfPath) && ('/' != *dirStart)) {
++			dirStart -= 1;
++		}
++		if (((size_t)(end - dirStart) > 10) && (0 == strncmp(end - 10, ".framework", 10))) {
++			end = dirStart;
++			break;
++		}
++		end = (dirStart > selfPath) ? dirStart : NULL;
++	}
++	if (NULL == end) {
++		return 0;
++	}
++	dirLen = (int)(end - selfPath);
++	written = snprintf(buf, bufLen, "%.*s/%.*s.framework/%.*s",
++			dirLen, selfPath, (int)stemLen, base + prefixLen, (int)stemLen, base + prefixLen);
++	if ((written < 0) || ((size_t)written >= bufLen)) {
++		return 0;
++	}
++	return (0 == access(buf, F_OK)) ? 1 : 0;
++}
++
++#endif /* defined(OMR_OS_IOS) */
++
++#endif /* !defined(OMRIOSFRAMEWORK_H) */
+diff --git a/include_core/omrsysvios.h b/include_core/omrsysvios.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..fddbbbe481dd49ca6c03662357945acb1bbf0b89
+--- /dev/null
++++ b/include_core/omrsysvios.h
+@@ -0,0 +1,60 @@
++/*******************************************************************************
++ * Copyright IBM Corp. and others 2026
++ *
++ * This program and the accompanying materials are made available under
++ * the terms of the Eclipse Public License 2.0 which accompanies this
++ * distribution and is available at https://www.eclipse.org/legal/epl-2.0/
++ * or the Apache License, Version 2.0 which accompanies this distribution and
++ * is available at https://www.apache.org/licenses/LICENSE-2.0.
++ *
++ * This Source Code may also be made available under the following
++ * Secondary Licenses when the conditions for such availability set
++ * forth in the Eclipse Public License, v. 2.0 are satisfied: GNU
++ * General Public License, version 2 with the GNU Classpath
++ * Exception [1] and GNU General Public License, version 2 with the
++ * OpenJDK Assembly Exception [2].
++ *
++ * [1] https://www.gnu.org/software/classpath/license.html
++ * [2] https://openjdk.org/legal/assembly-exception.html
++ *
++ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0 OR GPL-2.0-only WITH OpenJDK-assembly-exception-1.0
++ *******************************************************************************/
++
++#if !defined(OMRSYSVIOS_H)
++#define OMRSYSVIOS_H
++
++/*
++ * Sandboxed iOS apps may not use SysV IPC: shmget() raises SIGSYS instead of
++ * failing. Include this header after <sys/ipc.h>, <sys/sem.h> and <sys/shm.h>
++ * to route every SysV call to a stub that fails with ENOSYS, so callers take
++ * their normal error paths.
++ */
++#if defined(OMR_OS_IOS)
++
++#include <errno.h>
++#include <stddef.h>
++#include <sys/ipc.h>
++#include <sys/sem.h>
++#include <sys/shm.h>
++
++static inline key_t omr_iosFtok(const char *path, int id) { errno = ENOSYS; return (key_t)-1; }
++static inline int omr_iosSemget(key_t key, int nsems, int semflg) { errno = ENOSYS; return -1; }
++static inline int omr_iosShmget(key_t key, size_t size, int shmflg) { errno = ENOSYS; return -1; }
++static inline int omr_iosSemctl(int semid, int semnum, int cmd, ...) { errno = ENOSYS; return -1; }
++static inline int omr_iosSemop(int semid, struct sembuf *sops, size_t nsops) { errno = ENOSYS; return -1; }
++static inline int omr_iosShmctl(int shmid, int cmd, struct shmid_ds *buf) { errno = ENOSYS; return -1; }
++static inline void *omr_iosShmat(int shmid, const void *shmaddr, int shmflg) { errno = ENOSYS; return (void *)-1; }
++static inline int omr_iosShmdt(const void *shmaddr) { errno = ENOSYS; return -1; }
++
++#define ftok omr_iosFtok
++#define semget omr_iosSemget
++#define shmget omr_iosShmget
++#define semctl omr_iosSemctl
++#define semop omr_iosSemop
++#define shmctl omr_iosShmctl
++#define shmat omr_iosShmat
++#define shmdt omr_iosShmdt
++
++#endif /* defined(OMR_OS_IOS) */
++
++#endif /* !defined(OMRSYSVIOS_H) */
+diff --git a/include_core/thread_api.h b/include_core/thread_api.h
+index 8517da3f8f6e320f1060f26f78cbf4c1df9eb4a7..f25fd4825da37746bfbb736ad932fd05046ac7da 100644
+--- a/include_core/thread_api.h
++++ b/include_core/thread_api.h
+@@ -39,9 +39,9 @@
+ #include "omrthread.h"
+ #include "omrcomp.h"
+ 
+-#if defined(OSX) && defined(AARCH64)
++#if defined(OSX) && defined(AARCH64) && !defined(OMR_OS_IOS)
+ #include <pthread.h> /* for pthread_jit_write_protect_np() */
+-#endif /* defined(OSX) && defined(AARCH64) */
++#endif /* defined(OSX) && defined(AARCH64) && !defined(OMR_OS_IOS) */
+ 
+ #ifdef __cplusplus
+ extern "C" {
+@@ -1471,14 +1471,15 @@ struct J9ThreadLibrary;
+ /*
+  * @brief Control write access to memory containing dynamically generated code.
+  *
+- * Currently only meaningful on macOS using Aarch64 processors.
++ * Currently only meaningful on macOS using Aarch64 processors. iOS never maps
++ * memory that is both writable and executable, so the calls are no-ops there.
+  */
+-#if defined(OSX) && defined(AARCH64)
++#if defined(OSX) && defined(AARCH64) && !defined(OMR_OS_IOS)
+ #define omrthread_jit_write_protect_disable() pthread_jit_write_protect_np(0)
+ #define omrthread_jit_write_protect_enable()  pthread_jit_write_protect_np(1)
+-#else /* defined(OSX) && defined(AARCH64) */
++#else /* defined(OSX) && defined(AARCH64) && !defined(OMR_OS_IOS) */
+ #define omrthread_jit_write_protect_disable() /* nop */
+ #define omrthread_jit_write_protect_enable()  /* nop */
+-#endif /* defined(OSX) && defined(AARCH64) */
++#endif /* defined(OSX) && defined(AARCH64) && !defined(OMR_OS_IOS) */
+ 
+ #endif /* thread_api_h */
+diff --git a/port/osx/omrosdump.c b/port/osx/omrosdump.c
+index cf905274ebca2b42c10c0630d7f230579da3c8b8..a30cfac8955f8af082a2951ae8f635a00df59ba4 100644
+--- a/port/osx/omrosdump.c
++++ b/port/osx/omrosdump.c
+@@ -26,6 +26,21 @@
+  * @brief User space system dump for OSX
+  */
+ 
++#include "omrport.h"
++#include "omrportpriv.h"
++
++#if defined(OMR_OS_IOS)
++
++/* iOS forbids fork() and mach_vm access needed for user-space core dumps. */
++uintptr_t
++omrdump_create(struct OMRPortLibrary *portLibrary, char *filename, char *dumpType, void *userData)
++{
++	portLibrary->error_set_last_error_with_message(portLibrary, OMRPORT_ERROR_NOTEXIST, "System dumps are not supported on iOS");
++	return 1;
++}
++
++#else /* defined(OMR_OS_IOS) */
++
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <mach/mach.h>
+@@ -43,8 +58,6 @@
+ #include <sys/types.h>
+ #include <unistd.h>
+ 
+-#include "omrport.h"
+-#include "omrportpriv.h"
+ #include "omrosdump_helpers.h"
+ 
+ /* current thread flavors needed for OSX debugging */
+@@ -701,6 +714,8 @@ done:
+ 	return 1;
+ }
+ 
++#endif /* defined(OMR_OS_IOS) */
++
+ int32_t
+ omrdump_startup(struct OMRPortLibrary *portLibrary)
+ {
+diff --git a/port/osx/omrvmem.c b/port/osx/omrvmem.c
+index 5b467cce7ee9c2bf6bcde7a1aca9a170336e750a..d5cb64663db287e166245910d637fcc66027af45 100644
+--- a/port/osx/omrvmem.c
++++ b/port/osx/omrvmem.c
+@@ -353,6 +353,15 @@ omrvmem_reserve_memory_ex(struct OMRPortLibrary *portLibrary, struct J9PortVmemI
+ 
+ 	Trc_PRT_vmem_omrvmem_reserve_memory_Entry_replacement(params->startAddress, params->byteAmount, params->pageSize);
+ 
++#if defined(OMR_OS_IOS)
++	/* Reject before the address-range search: retrying a prohibited mapping cannot succeed. */
++	if (OMR_ARE_ANY_BITS_SET(params->mode, OMRPORT_VMEM_MEMORY_MODE_EXECUTE)) {
++		portLibrary->error_set_last_error(portLibrary, EPERM, OMRPORT_ERROR_VMEM_NOT_SUPPORTED);
++		update_vmemIdentifier(identifier, NULL, NULL, 0, 0, 0, 0, 0, NULL, -1);
++		return NULL;
++	}
++#endif /* defined(OMR_OS_IOS) */
++
+ 	Assert_PRT_true(params->startAddress <= params->endAddress);
+ 	ASSERT_VALUE_IS_PAGE_SIZE_ALIGNED(params->byteAmount, params->pageSize);
+ 
+@@ -457,6 +466,15 @@ reserveMemory(struct OMRPortLibrary *portLibrary, void *address, uintptr_t byteA
+ 		return result;
+ 	}
+ 
++#if defined(OMR_OS_IOS)
++	/* iOS does not permit apps to map executable memory (no JIT entitlement). */
++	if (OMR_ARE_ANY_BITS_SET(mode, OMRPORT_VMEM_MEMORY_MODE_EXECUTE)) {
++		portLibrary->error_set_last_error(portLibrary, EPERM, OMRPORT_ERROR_VMEM_NOT_SUPPORTED);
++		update_vmemIdentifier(identifier, NULL, NULL, 0, 0, 0, 0, 0, NULL, -1);
++		return result;
++	}
++#endif /* defined(OMR_OS_IOS) */
++
+ 	if (OMR_ARE_ANY_BITS_SET(mode, OMRPORT_VMEM_MEMORY_MODE_SHARE_FILE_OPEN)) {
+ 		flags = MAP_SHARED;
+ 		useBackingSharedFile = TRUE;
+@@ -508,12 +526,12 @@ reserveMemory(struct OMRPortLibrary *portLibrary, void *address, uintptr_t byteA
+ 		useBackingSharedFile = FALSE;
+ 	}
+ 
+-#if defined(AARCH64)
++#if defined(AARCH64) && !defined(OMR_OS_IOS)
+ 	if (OMR_ARE_ANY_BITS_SET(mode, OMRPORT_VMEM_MEMORY_MODE_EXECUTE)) {
+ 		flags |= MAP_JIT;
+ 		protectionFlags &= ~PROT_EXEC;
+ 	}
+-#endif /* defined(AARCH64) */
++#endif /* defined(AARCH64) && !defined(OMR_OS_IOS) */
+ 
+ 	result = mmap(address, (size_t)byteAmount, protectionFlags, flags, fd, 0);
+ 	if (MAP_FAILED == result) {
+diff --git a/port/unix/omrsignal.c b/port/unix/omrsignal.c
+index b4382d0179df2d212feb14b91aeab1a972d48dcc..59737262dcae26892d6a5d85e78a50919cc353bb 100644
+--- a/port/unix/omrsignal.c
++++ b/port/unix/omrsignal.c
+@@ -140,7 +140,18 @@ static OMRUnixAsyncHandlerRecord *asyncHandlerList;
+ static pthread_cond_t wakeUpASyncReporterCond;
+ static pthread_mutex_t wakeUpASyncReporterMutex;
+ #else /* defined(J9ZOS390) */
+-#if defined(OSX)
++#if defined(OMR_OS_IOS)
++/* Named POSIX semaphores are not available to sandboxed iOS apps; use an anonymous Mach semaphore. */
++#include <mach/mach.h>
++#define SIGSEM_T semaphore_t
++#define SIGSEM_POST(_sem) semaphore_signal(_sem)
++#define SIGSEM_ERROR -1
++#define SIGSEM_INIT(_sem, _name) ((KERN_SUCCESS == semaphore_create(mach_task_self(), &(_sem), SYNC_POLICY_FIFO, 0)) ? 0 : -1)
++#define SIGSEM_UNLINK(_name) do { /* do nothing */ } while (0)
++#define SIGSEM_DESTROY(_sem) semaphore_destroy(mach_task_self(), (_sem))
++#define SIGSEM_WAIT(_sem) semaphore_wait(_sem)
++#define SIGSEM_TRY_WAIT(_sem) semaphore_timedwait((_sem), (mach_timespec_t){0, 0})
++#elif defined(OSX) /* defined(OMR_OS_IOS) */
+ #define SIGSEM_T sem_t *
+ #define SIGSEM_POST(_sem) sem_post(_sem)
+ #define SIGSEM_ERROR SEM_FAILED
+diff --git a/port/unix/omrsl.c b/port/unix/omrsl.c
+index fb9c46e540a13a05a0581caacd73f3c0fad6c814..f3f4a94cd9906477897b21278458c94046dea25b 100644
+--- a/port/unix/omrsl.c
++++ b/port/unix/omrsl.c
+@@ -80,6 +80,7 @@
+ #define PLATFORM_DLL_EXTENSION ".dylib"
+ #include <mach-o/dyld.h>
+ #include <mach-o/loader.h>
++#include "omriosframework.h"
+ #else /* defined(OSX) */
+ #define PLATFORM_DLL_EXTENSION ".so"
+ #endif /* defined(OSX) */
+@@ -161,6 +162,17 @@ omrsl_open_shared_library(struct OMRPortLibrary *portLibrary, char *name, uintpt
+ 		openName = mangledName;
+ 	}
+ 
++#if defined(OMR_OS_IOS)
++	/* iOS ships libfoo.dylib as <Frameworks>/foo.framework/foo. */
++	if (!openExec) {
++		char frameworkName[MAX_STRING_LENGTH + 1];
++		if (omr_ios_map_library_path(openName, frameworkName, sizeof(frameworkName))) {
++			strcpy(mangledName, frameworkName);
++			openName = mangledName;
++		}
++	}
++#endif /* defined(OMR_OS_IOS) */
++
+ 	Trc_PRT_sl_open_shared_library_Event1(openName);
+ 
+ 	if (openNoLoad) {
+diff --git a/port/unix/omrsysinfo.c b/port/unix/omrsysinfo.c
+index 702de6e58e1f6e56a0b31150c0fa9b50304c3d2a..a600755919f8e2a8d62715a546442ce88b2d6b7d 100644
+--- a/port/unix/omrsysinfo.c
++++ b/port/unix/omrsysinfo.c
+@@ -36,7 +36,10 @@
+ #endif
+ #elif defined(OSX)
+ #define _XOPEN_SOURCE
++#if !defined(OMR_OS_IOS)
++/* libproc is not part of the iOS SDK. */
+ #include <libproc.h>
++#endif /* !defined(OMR_OS_IOS) */
+ #include <mach/mach.h>
+ #include <mach/processor_info.h>
+ #include <mach/mach_host.h>
+@@ -2347,6 +2350,8 @@ omrsysinfo_get_OS_type(struct OMRPortLibrary *portLibrary)
+ #if defined(J9OS_I5)
+ 	/* JCL on IBM i expects to see "OS/400" */
+ 	return "OS/400";
++#elif defined(OMR_OS_IOS)
++	return "iOS";
+ #elif defined(OSX)
+ 	return "Mac OS X";
+ #else
+@@ -3851,7 +3856,13 @@ retrieveOSXMemoryStats(struct OMRPortLibrary *portLibrary, struct J9MemoryInfo *
+ 			memInfo->totalSwap = vmusage.xsu_total;
+ 			memInfo->availSwap = vmusage.xsu_avail;
+ 		} else {
++#if defined(OMR_OS_IOS)
++			/* iOS has no swap and does not provide vm.swapusage. */
++			memInfo->totalSwap = 0;
++			memInfo->availSwap = 0;
++#else /* defined(OMR_OS_IOS) */
+ 			ret = OMRPORT_ERROR_SYSINFO_ERROR_READING_MEMORY_INFO;
++#endif /* defined(OMR_OS_IOS) */
+ 		}
+ 	}
+ 
+@@ -5865,6 +5876,19 @@ omrsysinfo_get_open_file_count(struct OMRPortLibrary *portLibrary, uint64_t *cou
+ 			}
+ 			closedir(dir); /* Done reading the /proc file-system. */
+ 		}
++#elif defined(OMR_OS_IOS)
++		/* libproc is unavailable on iOS; probe the descriptor table instead. */
++		int fd = 0;
++		int maxFd = getdtablesize();
++		for (fd = 0; fd < maxFd; fd++) {
++			struct stat fdStat;
++			if ((0 == fstat(fd, &fdStat)) && !S_ISSOCK(fdStat.st_mode) && !S_ISFIFO(fdStat.st_mode)) {
++				fdCount++;
++			}
++		}
++		*count = fdCount;
++		Trc_PRT_sysinfo_get_open_file_count_fileCount(fdCount);
++		ret = 0;
+ #elif defined(OSX)
+ 		pid_t pid = getpid();
+ 		/* First call with null to get the size of the buffer required */
+@@ -7925,7 +7949,10 @@ alloc_failed:
+ 	portLibrary->mem_free_memory(portLibrary, command);
+ 	closedir(dir);
+ 	return callbackResult;
+-#elif defined(OSX) /* defined(J9ZOS390) || defined(LINUX) */
++#elif defined(OMR_OS_IOS) /* defined(J9ZOS390) || defined(LINUX) */
++	/* Other processes are not visible from the iOS sandbox. */
++	return OMRPORT_ERROR_SYSINFO_NOT_SUPPORTED;
++#elif defined(OSX) /* defined(OMR_OS_IOS) */
+ 	uintptr_t callbackResult = 0;
+ 	pid_t *pidBuffer = NULL;
+ 	int actualBytes = 0;
+@@ -8022,7 +8049,20 @@ omrsysinfo_get_process_name(struct OMRPortLibrary *portLibrary, uintptr_t pid)
+ 			return exename;
+ 		}
+ 	}
+-#elif defined(OSX) /* defined(LINUX) && !defined(OMRZTPF) */
++#elif defined(OMR_OS_IOS) /* defined(LINUX) && !defined(OMRZTPF) */
++	if ((uintptr_t)getpid() == pid) {
++		char exebuf[PATH_MAX];
++		uint32_t size = sizeof(exebuf);
++		if (0 == _NSGetExecutablePath(exebuf, &size)) {
++			uintptr_t alloclen = strlen(exebuf) + 1;
++			char *exepath = portLibrary->mem_allocate_memory(portLibrary, alloclen, OMR_GET_CALLSITE(), OMRMEM_CATEGORY_PORT_LIBRARY);
++			if (NULL != exepath) {
++				memcpy(exepath, exebuf, alloclen);
++				return exepath;
++			}
++		}
++	}
++#elif defined(OSX) /* defined(OMR_OS_IOS) */
+ 	char exebuf[PROC_PIDPATHINFO_MAXSIZE];
+ 	int pidpathrc = proc_pidpath((int)pid, exebuf, sizeof(exebuf));
+ 	if (pidpathrc > 0) {
+diff --git a/port/unix/omrsysv_ipcwrappers.c b/port/unix/omrsysv_ipcwrappers.c
+index 4a2a5d539e4968d463dd3c948a180b4590a00840..baad80ba75d796f6a070985b4f33bf62213ce9c0 100644
+--- a/port/unix/omrsysv_ipcwrappers.c
++++ b/port/unix/omrsysv_ipcwrappers.c
+@@ -21,6 +21,8 @@
+  *******************************************************************************/
+ #include "omrsysv_ipcwrappers.h"
+ 
++#include "omrsysvios.h"
++
+ static void omr_setPortableError(OMRPortLibrary *portLibrary, const char * sysvfxName, int32_t sysvfx, int sysverrno);
+ 
+ static const char * ftokErrorMsgPrefix = "ftok : ";

@@ -1,0 +1,323 @@
+diff --git a/jcl/src/java.base/share/classes/openj9/internal/foreign/abi/LayoutStrPreprocessor.java b/jcl/src/java.base/share/classes/openj9/internal/foreign/abi/LayoutStrPreprocessor.java
+index d89113b83b3a7e2f1f1e422691bc7b26b40f70ab..1a37217946b9a270053f36884606e2bac611bc95 100644
+--- a/jcl/src/java.base/share/classes/openj9/internal/foreign/abi/LayoutStrPreprocessor.java
++++ b/jcl/src/java.base/share/classes/openj9/internal/foreign/abi/LayoutStrPreprocessor.java
+@@ -71,7 +71,7 @@ final class LayoutStrPreprocessor {
+ 				VARARGS_ATTR_NAME = "abi/sysv/varargs";
+ 			}
+ 		} else if (arch.equals("aarch64")) {
+-			if (osName.equals("Mac OS X")) {
++			if (osName.equals("Mac OS X") || osName.equals("iOS")) {
+ 				VARARGS_ATTR_NAME = "abi/aarch64/stack_varargs";
+ 			} else {
+ 				VARARGS_ATTR_NAME = "abi/sysv/varargs";
+diff --git a/jcl/src/java.base/share/classes/openj9/internal/tools/attach/target/AttachHandler.java b/jcl/src/java.base/share/classes/openj9/internal/tools/attach/target/AttachHandler.java
+index cb44d5d22e0c1319f5f4ff503e77ab0564ffe218..62ee926e368229c58ef9ebf2e95c858b607e12e5 100644
+--- a/jcl/src/java.base/share/classes/openj9/internal/tools/attach/target/AttachHandler.java
++++ b/jcl/src/java.base/share/classes/openj9/internal/tools/attach/target/AttachHandler.java
+@@ -149,11 +149,12 @@ public class AttachHandler extends Thread {
+ 		}
+ 		/*
+ 		 *  set default behaviour:
+-		 *  Java 6 R24 and later: disabled by default on z/OS, enabled on all other platforms
++		 *  Java 6 R24 and later: disabled by default on z/OS and iOS, enabled on all other platforms
+ 		 *  Java 5: disabled by default on all platforms
+ 		 */
+ 		/*[PR Jazz 59196 LIR: Disable attach API by default on z/OS (31972)]*/
+-		boolean enableAttach = !IPC.isZOS;
++		/* iOS apps are sandboxed and cannot use the SysV semaphores the Attach API relies on. */
++		boolean enableAttach = !IPC.isZOS && !IPC.isIOS;
+ 		/* the system property overrides the default */
+ 		String enableAttachProp = VM.internalGetProperties().getProperty("com.ibm.tools.attach.enable");  //$NON-NLS-1$
+ 		if (null != enableAttachProp) {
+diff --git a/jcl/src/java.base/share/classes/openj9/internal/tools/attach/target/IPC.java b/jcl/src/java.base/share/classes/openj9/internal/tools/attach/target/IPC.java
+index 376b560b36fc69e878d74c6214da719581cb4bc5..8bdadccaa0bf9f5e89a5f64226d98705fe85830b 100644
+--- a/jcl/src/java.base/share/classes/openj9/internal/tools/attach/target/IPC.java
++++ b/jcl/src/java.base/share/classes/openj9/internal/tools/attach/target/IPC.java
+@@ -90,6 +90,10 @@ public class IPC {
+ 	 * True if operating system is z/OS.
+ 	 */
+ 	public static final boolean isZOS;
++	/**
++	 * True if operating system is iOS.
++	 */
++	public static final boolean isIOS;
+ 
+ 	/**
+ 	 * Controls use of the FileLockWatchdogTask.
+@@ -105,6 +109,7 @@ public class IPC {
+ 		boolean tempIsLinux = false;
+ 		boolean tempIsWindows = false;
+ 		boolean tempIsZos = false;
++		boolean tempIsIOS = false;
+ 		if (null != osName) {
+ 			if (osName.equals("Linux")) { //$NON-NLS-1$
+ 				tempIsLinux = true;
+@@ -112,11 +117,14 @@ public class IPC {
+ 				tempIsWindows = true;
+ 			} else if (osName.equals("z/OS")) { //$NON-NLS-1$
+ 				tempIsZos = true;
++			} else if (osName.equals("iOS")) { //$NON-NLS-1$
++				tempIsIOS = true;
+ 			}
+ 		}
+ 		isLinux = tempIsLinux;
+ 		isWindows = tempIsWindows;
+ 		isZOS = tempIsZos;
++		isIOS = tempIsIOS;
+ 
+ 		String propUseFileLockWatchdog = props.getProperty(COM_IBM_TOOLS_ATTACH_USE_FILELOCK_WATCHDOG);
+ 		if (propUseFileLockWatchdog == null) {
+diff --git a/jcl/src/java.management/share/classes/com/ibm/java/lang/management/internal/ManagementUtils.java b/jcl/src/java.management/share/classes/com/ibm/java/lang/management/internal/ManagementUtils.java
+index c4b159ef91f395060420d5a7b1af674b936e6682..e6b757f7e954091bf16c7015d9c2725ee88d7456 100644
+--- a/jcl/src/java.management/share/classes/com/ibm/java/lang/management/internal/ManagementUtils.java
++++ b/jcl/src/java.management/share/classes/com/ibm/java/lang/management/internal/ManagementUtils.java
+@@ -94,6 +94,7 @@ public final class ManagementUtils {
+ 		isUnix = "AIX".equals(thisOs) //$NON-NLS-1$
+ 				|| "Linux".equals(thisOs) //$NON-NLS-1$
+ 				|| "Mac OS X".equals(thisOs) //$NON-NLS-1$
++				|| "iOS".equals(thisOs) //$NON-NLS-1$
+ 				|| "z/OS".equals(thisOs); //$NON-NLS-1$
+ 
+ 		VERBOSE_MODE = properties.getProperty("com.ibm.lang.management.verbose") != null; //$NON-NLS-1$
+diff --git a/runtime/CMakeLists.txt b/runtime/CMakeLists.txt
+index e73309fc8776c9b86101beb8003f082243bd6857..f8a82023b451e610626a9ea2bd5928f1bf127d4e 100644
+--- a/runtime/CMakeLists.txt
++++ b/runtime/CMakeLists.txt
+@@ -585,7 +585,7 @@ endif()
+ if(J9VM_MODULE_THREAD)
+ 	add_subdirectory(thread)
+ endif()
+-if(J9VM_INTERP_NATIVE_SUPPORT AND NOT OMR_ARCH_RISCV)
++if(J9VM_INTERP_NATIVE_SUPPORT AND NOT OMR_ARCH_RISCV AND NOT OMR_OS_IOS)
+ 	add_subdirectory(compiler)
+ endif()
+ if(J9VM_MODULE_UTIL)
+diff --git a/runtime/cmake/caches/ios_aarch64.cmake b/runtime/cmake/caches/ios_aarch64.cmake
+new file mode 100644
+index 0000000000000000000000000000000000000000..ed7e328ea5e4fa1d2b45f62dc5f24532ffaa24df
+--- /dev/null
++++ b/runtime/cmake/caches/ios_aarch64.cmake
+@@ -0,0 +1,49 @@
++################################################################################
++# Copyright IBM Corp. and others 2026
++#
++# This program and the accompanying materials are made available under
++# the terms of the Eclipse Public License 2.0 which accompanies this
++# distribution and is available at https://www.eclipse.org/legal/epl-2.0/
++# or the Apache License, Version 2.0 which accompanies this distribution and
++# is available at https://www.apache.org/licenses/LICENSE-2.0.
++#
++# This Source Code may also be made available under the following
++# Secondary Licenses when the conditions for such availability set
++# forth in the Eclipse Public License, v. 2.0 are satisfied: GNU
++# General Public License, version 2 with the GNU Classpath
++# Exception [1] and GNU General Public License, version 2 with the
++# OpenJDK Assembly Exception [2].
++#
++# [1] https://www.gnu.org/software/classpath/license.html
++# [2] https://openjdk.org/legal/assembly-exception.html
++#
++# SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0 OR GPL-2.0-only WITH OpenJDK-assembly-exception-1.0
++################################################################################
++
++# iOS (device and simulator) on arm64: interpreter only, full (non-compressed) references.
++# iOS apps may not create executable memory, so the JIT and AOT are not built.
++
++set(J9VM_ARCH_AARCH64 ON CACHE BOOL "")
++set(J9VM_ENV_DATA64 ON CACHE BOOL "")
++set(J9VM_ENV_HAS_FPU ON CACHE BOOL "")
++set(J9VM_ENV_LITTLE_ENDIAN ON CACHE BOOL "")
++
++# Sparse heaps reserve large address ranges; iOS limits app virtual address space.
++set(J9VM_GC_SPARSE_HEAP_ALLOCATION OFF CACHE BOOL "")
++
++set(J9VM_INTERP_ATOMIC_FREE_JNI ON CACHE BOOL "")
++set(J9VM_INTERP_ATOMIC_FREE_JNI_USES_FLUSH OFF CACHE BOOL "")
++set(J9VM_INTERP_JIT_ON_BY_DEFAULT OFF CACHE BOOL "")
++set(J9VM_INTERP_TWO_PASS_EXCLUSIVE OFF CACHE BOOL "")
++
++set(J9VM_JIT_NEW_DUAL_HELPERS OFF CACHE BOOL "")
++
++set(J9VM_MODULE_CODERT_VM OFF CACHE BOOL "")
++set(J9VM_MODULE_J9JIT_VM OFF CACHE BOOL "")
++
++set(J9VM_PORT_RUNTIME_INSTRUMENTATION OFF CACHE BOOL "")
++
++set(OMR_GC_CONCURRENT_SCAVENGER ON CACHE BOOL "")
++set(OMR_GC_IDLE_HEAP_MANAGER ON CACHE BOOL "")
++
++include("${CMAKE_CURRENT_LIST_DIR}/common.cmake")
+diff --git a/runtime/j9vm/jvm.c b/runtime/j9vm/jvm.c
+index 19677e3d7f7a88be8fe163d93e69486fbeefd2cf..bb8887ff1b7e8e708ab9cccda32ce9bfde757b42 100644
+--- a/runtime/j9vm/jvm.c
++++ b/runtime/j9vm/jvm.c
+@@ -143,6 +143,18 @@ struct arg_list
+ #include <sys/sysctl.h>
+ #endif /* defined(OSX) */
+ 
++#if defined(OMR_OS_IOS)
++#include "omriosframework.h"
++/*
++ * On iOS every library is packaged as <Frameworks>/<name>.framework/<name> and the
++ * runtime resources (lib/modules, conf, ...) live in jvm.framework/javahome unless
++ * -Djava.home=<dir> is passed to JNI_CreateJavaVM.
++ */
++#define IOS_JAVA_HOME_OPTION "-Djava.home="
++#define IOS_DEFAULT_JAVA_HOME_DIR "/javahome"
++static const char *iosJavaHomeOverride = NULL;
++#endif /* defined(OMR_OS_IOS) */
++
+ #if defined(WIN32)
+ #include <processenv.h>
+ #include <stdlib.h>
+@@ -1201,6 +1213,31 @@ preloadLibraries(void)
+ #endif /* defined(AIXPPC) */
+ 
+ 	jvmDLLNameBuffer = getj9bin();
++#if defined(OMR_OS_IOS)
++	/* jvmDLLNameBuffer is <Frameworks>/jvm.framework */
++	if (NULL == iosJavaHomeOverride) {
++		j9Buffer = jvmBufferCat(NULL, jvmBufferData(jvmDLLNameBuffer));
++		j9Buffer = jvmBufferCat(j9Buffer, IOS_DEFAULT_JAVA_HOME_DIR);
++	} else {
++		j9Buffer = jvmBufferCat(NULL, iosJavaHomeOverride);
++	}
++	truncatePath(jvmBufferData(jvmDLLNameBuffer));
++	/* VM libraries are found by name in the Frameworks directory (see omr_ios_map_library_path). */
++	j9binBuffer = jvmBufferCat(NULL, jvmBufferData(jvmDLLNameBuffer));
++	j9libvmBuffer = jvmBufferCat(NULL, jvmBufferData(j9binBuffer));
++	jrebinBuffer = jvmBufferCat(NULL, jvmBufferData(j9Buffer));
++	jrebinBuffer = jvmBufferCat(jrebinBuffer, "/lib");
++	j9libBuffer = jvmBufferCat(NULL, jvmBufferData(jrebinBuffer));
++	jvmInSubdir = FALSE;
++	free(jvmDLLNameBuffer);
++	jvmDLLNameBuffer = NULL;
++
++	DBG_MSG(("j9binBuffer   = <%s>\n", jvmBufferData(j9binBuffer)));
++	DBG_MSG(("jrebinBuffer  = <%s>\n", jvmBufferData(jrebinBuffer)));
++	DBG_MSG(("j9libBuffer   = <%s>\n", jvmBufferData(j9libBuffer)));
++	DBG_MSG(("j9libvmBuffer = <%s>\n", jvmBufferData(j9libvmBuffer)));
++	DBG_MSG(("j9Buffer      = <%s>\n", jvmBufferData(j9Buffer)));
++#else /* defined(OMR_OS_IOS) */
+ 	j9binBuffer = jvmBufferCat(NULL, jvmBufferData(jvmDLLNameBuffer));
+ 
+ 	addToLibpath(jvmBufferData(j9binBuffer), TRUE);
+@@ -1275,6 +1312,7 @@ preloadLibraries(void)
+ 	DBG_MSG(("j9libBuffer   = <%s>\n", jvmBufferData(j9libBuffer)));
+ 	DBG_MSG(("j9libvmBuffer = <%s>\n", jvmBufferData(j9libvmBuffer)));
+ 	DBG_MSG(("j9Buffer      = <%s>\n", jvmBufferData(j9Buffer)));
++#endif /* defined(OMR_OS_IOS) */
+ 
+ 	addToLibpath(jvmBufferData(jrebinBuffer), TRUE);
+ 
+@@ -2007,6 +2045,20 @@ JNI_CreateJavaVM_impl(JavaVM **pvm, void **penv, void *vm_args, BOOLEAN isJITSer
+ #endif /* defined(AIXPPC) || (defined(J9ZOS390) && (JAVA_SPEC_VERSION >= 21)) */
+ 
+ 	/* no tracing for this function, since it's unlikely to be used once the VM is running and the trace engine is initialized */
++#if defined(OMR_OS_IOS)
++	{
++		/* The resource directory must be known before options are parsed. The last occurrence wins, as for other -D options. */
++		JavaVMInitArgs *initArgs = (JavaVMInitArgs *)vm_args;
++		jint optionIndex = 0;
++		iosJavaHomeOverride = NULL;
++		for (optionIndex = 0; optionIndex < initArgs->nOptions; optionIndex++) {
++			const char *optionString = initArgs->options[optionIndex].optionString;
++			if ((NULL != optionString) && (0 == strncmp(optionString, IOS_JAVA_HOME_OPTION, LITERAL_STRLEN(IOS_JAVA_HOME_OPTION)))) {
++				iosJavaHomeOverride = optionString + LITERAL_STRLEN(IOS_JAVA_HOME_OPTION);
++			}
++		}
++	}
++#endif /* defined(OMR_OS_IOS) */
+ 	preloadLibraries();
+ 
+ #ifdef WIN32
+@@ -2738,6 +2790,15 @@ preloadLibrary(char *dllName, BOOLEAN inJVMDir)
+ #ifdef AIXPPC
+ 	loadAndInit(jvmBufferData(buffer), L_RTLD_LOCAL, NULL);
+ #endif
++#if defined(OMR_OS_IOS)
++	{
++		char frameworkPath[J9_MAX_PATH];
++		if (omr_ios_map_library_path(jvmBufferData(buffer), frameworkPath, sizeof(frameworkPath))) {
++			free(buffer);
++			buffer = jvmBufferCat(NULL, frameworkPath);
++		}
++	}
++#endif /* defined(OMR_OS_IOS) */
+ 	handle = (void *)dlopen(jvmBufferData(buffer), RTLD_NOW);
+ #ifdef AIXPPC
+ 	if (handle == NULL) {
+diff --git a/runtime/port/sysvipc/j9SysvIPCWrappers.c b/runtime/port/sysvipc/j9SysvIPCWrappers.c
+index b1a9c217d66b06cfecc0e2a7db8a5df2772c5554..401d2b8b0f088afd258debf6fe2d59c0bdd9f073 100644
+--- a/runtime/port/sysvipc/j9SysvIPCWrappers.c
++++ b/runtime/port/sysvipc/j9SysvIPCWrappers.c
+@@ -20,6 +20,7 @@
+  * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0 OR GPL-2.0-only WITH OpenJDK-assembly-exception-1.0
+  *******************************************************************************/
+ #include "j9SysvIPCWrappers.h"
++#include "omrsysvios.h"
+ 
+ static void setPortableError(J9PortLibrary *portLibrary, const char * sysvfxName, int32_t sysvfx, int sysverrno);
+ 
+diff --git a/runtime/port/sysvipc/j9sharedhelper.c b/runtime/port/sysvipc/j9sharedhelper.c
+index 8750438d542c16927b6e06be771690daba5ea3fd..a34ec9fdd4e24b81a9630a64996f84c1ab743c6e 100644
+--- a/runtime/port/sysvipc/j9sharedhelper.c
++++ b/runtime/port/sysvipc/j9sharedhelper.c
+@@ -34,6 +34,7 @@
+ #include <string.h>
+ #include <memory.h>
+ #include <fcntl.h>
++#include "omrsysvios.h"
+ 
+ #if defined(J9ZOS390)
+ #include "atoe.h"
+@@ -341,8 +342,8 @@ cleanSharedMemorySegments(struct J9PortLibrary* portLibrary)
+ 			return;
+ 		}
+ 	}
+-#elif defined(J9ZTPF) /* defined(J9ZOS390) */
+-	/* The z/TPF platform does not support the ipcs command */
++#elif defined(J9ZTPF) || defined(OMR_OS_IOS) /* defined(J9ZOS390) */
++	/* The z/TPF platform does not support the ipcs command; iOS cannot spawn processes. */
+ 	Trc_PRT_shared_cleanSharedMemorySegments_exit();
+ 	return;
+ #else /* defined(J9ZTPF) */
+@@ -449,7 +450,7 @@ errorRet:
+ 			Trc_PRT_shared_cleanSharedMemorySegments_childFailed(childStatus);
+ 		}
+ 	}
+-#else
++#elif !defined(OMR_OS_IOS) /* defined(J9ZOS390) */
+ 	pclose(ipcsOutput);
+ #endif
+ 
+diff --git a/runtime/port/unix/j9ipcmutex.c b/runtime/port/unix/j9ipcmutex.c
+index b0a2c972c262a40bd828819cdfe207b85f23d86f..ad5fc357827d90187f9e8d72ef1a136bf0cde17c 100644
+--- a/runtime/port/unix/j9ipcmutex.c
++++ b/runtime/port/unix/j9ipcmutex.c
+@@ -37,6 +37,7 @@
+ #include <string.h>
+ #include <errno.h>
+ #include "j9port.h"
++#include "omrsysvios.h"
+ 
+ #if !defined(OSX) /* OSX provides this union in it's sys/sem.h */
+ /* arg for semctl semaphore system calls. */
+diff --git a/runtime/vm/jvminit.c b/runtime/vm/jvminit.c
+index 67cb5ee1f2c49dd3b2642e19b61757e045cd3110..e41d95ee202fe43ebd1aeb60dd8818680cb62ee4 100644
+--- a/runtime/vm/jvminit.c
++++ b/runtime/vm/jvminit.c
+@@ -3727,8 +3727,10 @@ modifyDllLoadTable(J9JavaVM * vm, J9Pool* loadTable, J9VMInitArgs* j9vm_args)
+ 		}
+ 	}
+ 
+-	/* Temporarily disable JIT/AOT until it is fully implemented */
+-#if defined(RISCV64)
++	/* Temporarily disable JIT/AOT until it is fully implemented.
++	 * iOS does not allow apps to generate executable code, so it is always interpreted.
++	 */
++#if defined(RISCV64) || defined(OMR_OS_IOS)
+ 	xint = TRUE;
+ 	xjit = FALSE;
+ 	xaot = FALSE;

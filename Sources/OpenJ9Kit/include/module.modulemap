@@ -1,0 +1,4 @@
+module OpenJ9Kit {
+    umbrella header "OpenJ9Kit/OpenJ9Kit.h"
+    export *
+}

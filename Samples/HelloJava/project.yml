@@ -1,0 +1,55 @@
+name: HelloJava
+options:
+  deploymentTarget:
+    iOS: "15.0"
+packages:
+  OpenJ9:
+    path: ../..
+settings:
+  base:
+    CLANG_ENABLE_OBJC_ARC: YES
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+    ARCHS: arm64
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+targets:
+  HelloJava:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: OpenJ9
+        product: OpenJ9
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.openj9.ios.HelloJava
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY[sdk=iphonesimulator*]: "-"
+    preBuildScripts:
+      - name: Compile Java 21 smoke jar
+        script: |
+          set -euo pipefail
+          HOST_JAVA_HOME="${HOST_JAVA_HOME:-${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}}"
+          mkdir -p "$DERIVED_FILE_DIR/java-classes"
+          "$HOST_JAVA_HOME/bin/javac" --release 21 -encoding UTF-8 -d "$DERIVED_FILE_DIR/java-classes" "$SRCROOT/java/src/HelloIOS.java"
+          "$HOST_JAVA_HOME/bin/jar" --create --file "$DERIVED_FILE_DIR/HelloIOS.jar" -C "$DERIVED_FILE_DIR/java-classes" .
+        basedOnDependencyAnalysis: false
+    postBuildScripts:
+      - name: Bundle Java smoke jar
+        script: |
+          set -euo pipefail
+          mkdir -p "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          cp "$DERIVED_FILE_DIR/HelloIOS.jar" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/HelloIOS.jar"
+        basedOnDependencyAnalysis: false
+schemes:
+  HelloJava:
+    build:
+      targets:
+        HelloJava: all
+    run:
+      config: Debug

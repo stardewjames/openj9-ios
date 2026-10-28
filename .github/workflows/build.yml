@@ -1,0 +1,181 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      configure_only:
+        description: Stop after configure
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  jdk:
+    name: jdk (${{ matrix.sdk }})
+    runs-on: macos-15
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [iphonesimulator, iphoneos]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          brew install autoconf ccache cmake bash make
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          xcodebuild -version
+          xcrun --sdk ${{ matrix.sdk }} --show-sdk-path
+
+      - name: Fetch and patch sources
+        run: scripts/fetch-sources.sh
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: work/ccache
+          key: ccache-${{ matrix.sdk }}-${{ hashFiles('sources.env', 'patches/*.patch') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ matrix.sdk }}-${{ hashFiles('sources.env', 'patches/*.patch') }}-
+            ccache-${{ matrix.sdk }}-
+
+      - name: Configure and build
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/work/ccache
+          CCACHE_MAXSIZE: 3G
+          CCACHE_COMPRESS: '1'
+        run: |
+          if [[ "${{ inputs.configure_only }}" == "true" ]]; then
+            scripts/build-jdk.sh ${{ matrix.sdk }} --configure-only
+          else
+            scripts/build-jdk.sh ${{ matrix.sdk }}
+          fi
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: work/ccache
+          key: ccache-${{ matrix.sdk }}-${{ hashFiles('sources.env', 'patches/*.patch') }}-${{ github.run_id }}
+
+      - name: Collect failure logs
+        if: failure()
+        run: |
+          mkdir -p logs
+          conf=work/src/jdk/build/ios-${{ matrix.sdk }}
+          cp "$conf/config.log" logs/ 2>/dev/null || true
+          cp "$conf/spec.gmk" logs/ 2>/dev/null || true
+          cp "$conf/toolchain.cmake" logs/ 2>/dev/null || true
+          cp -R "$conf/make-support/failure-logs" logs/ 2>/dev/null || true
+          cp "$conf/build.log" logs/ 2>/dev/null || true
+          find "$conf/vm" -maxdepth 2 -name 'CMake*.log' -exec cp {} logs/ \; 2>/dev/null || true
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.sdk }}
+          path: logs
+          if-no-files-found: ignore
+
+      - name: Upload jmods
+        if: ${{ !inputs.configure_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: jmods-${{ matrix.sdk }}
+          path: work/src/jdk/build/ios-${{ matrix.sdk }}/images/jmods
+          if-no-files-found: error
+
+  package:
+    needs: jdk
+    if: ${{ !inputs.configure_only }}
+    runs-on: macos-15
+    permissions:
+      contents: write
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: brew install xcodegen
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: jmods-iphoneos
+          path: work/jmods/iphoneos
+      - uses: actions/download-artifact@v4
+        with:
+          name: jmods-iphonesimulator
+          path: work/jmods/iphonesimulator
+
+      - name: Download build JDK (jlink)
+        run: |
+          source sources.env
+          mkdir -p work/semeru/extract
+          curl -fsSL --retry 3 -o work/semeru/semeru.tar.gz "$SEMERU_JDK_URL"
+          expected="$(curl -fsSL --retry 3 "$SEMERU_JDK_SHA256_URL" | awk '{print $1}')"
+          actual="$(shasum -a 256 work/semeru/semeru.tar.gz | awk '{print $1}')"
+          [[ "$expected" == "$actual" ]] || { echo "Semeru checksum mismatch" >&2; exit 1; }
+          tar -xzf work/semeru/semeru.tar.gz -C work/semeru/extract
+          java="$(find work/semeru/extract -maxdepth 6 -type f -path '*/bin/java' -print -quit)"
+          [[ -n "$java" ]] || { echo "Semeru archive has no JDK" >&2; exit 1; }
+          echo "SEMERU_HOME=$(cd "$(dirname "$java")/.." && pwd)" >> "$GITHUB_ENV"
+
+      - name: Package runtime frameworks
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF_TYPE" == tag ]] || version=21.0.13
+          for sdk in iphoneos iphonesimulator; do
+            scripts/package-runtime.sh --sdk $sdk --jmods work/jmods/$sdk \
+              --jlink "$SEMERU_HOME/bin/jlink" --out out/runtime --version "$version"
+          done
+
+      - name: Create XCFrameworks
+        run: |
+          scripts/make-xcframeworks.sh --device out/runtime/iphoneos/Frameworks \
+            --simulator out/runtime/iphonesimulator/Frameworks --out Artifacts/XCFrameworks
+          scripts/generate-package.sh --frameworks-dir Artifacts/XCFrameworks
+
+      - name: Simulator smoke test
+        run: scripts/smoke-test-simulator.sh
+
+      - name: Upload XCFrameworks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenJ9-iOS-xcframeworks
+          path: |
+            Artifacts/XCFrameworks/*.zip
+            Artifacts/XCFrameworks/checksums.txt
+            Package.swift
+          if-no-files-found: warn
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs
+          path: work/smoke
+          if-no-files-found: ignore
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          scripts/generate-package.sh --frameworks-dir Artifacts/XCFrameworks \
+            --remote-base-url "$base" --checksums Artifacts/XCFrameworks/checksums.txt
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "OpenJ9 JDK 21 runtime for iOS" \
+            Artifacts/XCFrameworks/*.zip Artifacts/XCFrameworks/checksums.txt Package.swift

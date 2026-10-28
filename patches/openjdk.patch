@@ -1,0 +1,1335 @@
+diff --git a/closed/OpenJ9.gmk b/closed/OpenJ9.gmk
+index 5e0641abb1b87ee1aad6a28a3efacee6dd062b04..ed0194ef787a5f6ed46a09b33680626d8caa6e2f 100644
+--- a/closed/OpenJ9.gmk
++++ b/closed/OpenJ9.gmk
+@@ -289,6 +289,19 @@ ifeq ($(call isTargetOs, macosx), true)
+   ifneq (,$(SYSROOT))
+     CMAKE_ARGS += -DCMAKE_OSX_SYSROOT="$(SYSROOT)"
+   endif
++  ifeq ($(OPENJDK_TARGET_OS_ENV), macosx.ios)
++    # The toolchain file sets the iOS system name, target triple and
++    # deployment target; repeat the cache settings to be explicit.
++    CMAKE_ARGS += \
++        -DCMAKE_OSX_ARCHITECTURES=arm64 \
++        -DCMAKE_OSX_DEPLOYMENT_TARGET=$(IOS_VERSION_MIN) \
++        -DCMAKE_SHARED_LINKER_FLAGS=-Wl,-headerpad_max_install_names \
++        #
++    # Build tools (hookgen, tracegen, tracemerge, constgen) are compiled for
++    # iOS; this launcher runs them on the macOS host. It is a CMake list so
++    # it works regardless of the file mode of the script.
++    CMAKE_ARGS += -DOMR_EXE_LAUNCHER="/bin/sh;$(TOPDIR)/closed/autoconf/ios-host-exec.sh"
++  endif
+ endif # macosx
+ 
+ ifneq (,$(CCACHE))
+diff --git a/closed/autoconf/custom-hook.m4 b/closed/autoconf/custom-hook.m4
+index 950470c6fb3c0cdee8ac102fbe04bcbeaa6f0d19..be981fd16c615fe01290bf5fde8f1f73d3e843aa 100644
+--- a/closed/autoconf/custom-hook.m4
++++ b/closed/autoconf/custom-hook.m4
+@@ -62,6 +62,17 @@ AC_DEFUN_ONCE([CUSTOM_EARLY_HOOK],
+   OPENJ9_CONFIGURE_WARNINGS
+   OPENJ9_CHECK_NASM_VERSION
+   OPENJCEPLUS_SETUP
++
++  if test "x$OPENJDK_TARGET_OS_ENV" = xmacosx.ios ; then
++    if test "x$OPENJ9_ENABLE_DDR" = xtrue ||
++        test "x$OPENJ9_ENABLE_JITSERVER" = xtrue ||
++        test "x$OPENJ9_ENABLE_CRAC_SUPPORT" = xtrue ||
++        test "x$OPENJ9_ENABLE_CRIU_SUPPORT" = xtrue ||
++        test "x$OPENJ9_ENABLE_SNAPSHOTS" = xtrue ||
++        test "x$OPENJ9_ENABLE_CUDA" = xtrue ; then
++      AC_MSG_ERROR([iOS does not support DDR, JITServer, CRaC, CRIU, snapshots or CUDA])
++    fi
++  fi
+ ])
+ 
+ AC_DEFUN([OPENJ9_BASIC_SETUP_FUNDAMENTAL_TOOLS],
+@@ -240,6 +251,9 @@ AC_DEFUN([OPENJ9_CONFIGURE_DDR],
+   elif test "x$enable_ddr" = xno ; then
+     AC_MSG_RESULT([no (explicitly disabled)])
+     OPENJ9_ENABLE_DDR=false
++  elif test "x$enable_ddr" = x && test "x$OPENJDK_TARGET_OS_ENV" = xmacosx.ios ; then
++    AC_MSG_RESULT([no (default for iOS)])
++    OPENJ9_ENABLE_DDR=false
+   elif test "x$enable_ddr" = x ; then
+     case "$OPENJ9_PLATFORM_CODE" in
+       ap64|oa64|or64|wa64|xa64|xl64|xr64|xz64)
+@@ -498,6 +512,14 @@ AC_DEFUN([OPENJ9_PLATFORM_SETUP],
+   # Default OPENJ9_BUILD_OS=OPENJDK_BUILD_OS, but override with OpenJ9 equivalent as appropriate
+   OPENJ9_BUILD_OS="${OPENJDK_BUILD_OS}"
+ 
++  if test "x$OPENJDK_TARGET_OS_ENV" = xmacosx.ios ; then
++    # Only non-compressed references are supported for iOS.
++    if test "x$with_noncompressedrefs" = xno ; then
++      AC_MSG_ERROR([iOS builds require --with-noncompressedrefs])
++    fi
++    with_noncompressedrefs=yes
++  fi
++
+   if test "x$with_noncompressedrefs" = xyes ; then
+     OMR_MIXED_REFERENCES_MODE=off
+     OPENJ9_BUILD_MODE_ARCH="${OPENJ9_CPU}"
+@@ -538,7 +560,12 @@ AC_DEFUN([OPENJ9_PLATFORM_SETUP],
+   elif test "x$OPENJ9_CPU" = xppc-64 ; then
+     OPENJ9_PLATFORM_CODE=ap64
+   elif test "x$OPENJ9_CPU" = xaarch64 ; then
+-    if test "x$OPENJDK_BUILD_OS" = xlinux ; then
++    if test "x$OPENJDK_TARGET_OS_ENV" = xmacosx.ios ; then
++      # iOS is always cross-compiled on a macOS host, so key on the target.
++      # The platform code or64 keeps the Apple arm64 JCL preprocessing.
++      OPENJ9_PLATFORM_CODE=or64
++      OPENJ9_BUILD_OS=ios
++    elif test "x$OPENJDK_BUILD_OS" = xlinux ; then
+       OPENJ9_PLATFORM_CODE=xr64
+       if test "x$COMPILE_TYPE" = xcross ; then
+         OPENJ9_BUILD_MODE_ARCH="${OPENJ9_BUILD_MODE_ARCH}_cross"
+diff --git a/closed/autoconf/custom-spec.gmk.in b/closed/autoconf/custom-spec.gmk.in
+index a4ac37e1071031a066722d8b7a83554593dd328e..d2b3186de5687d6f469aee1faacdca7d00744b65 100644
+--- a/closed/autoconf/custom-spec.gmk.in
++++ b/closed/autoconf/custom-spec.gmk.in
+@@ -121,6 +121,10 @@ ifeq ($(OPENJDK_TARGET_OS), macosx)
+   # the compiler option will point to the same version. The environment
+   # variable is defined to support dependencies where the compiler option
+   # is not applied.
++  # For iOS targets this still applies to the macOS build tools; the iOS
++  # target compilations get the platform and version via -target (and
++  # CMAKE_OSX_DEPLOYMENT_TARGET), which take precedence. Do not also export
++  # IPHONEOS_DEPLOYMENT_TARGET: clang rejects conflicting deployment variables.
+   export MACOSX_DEPLOYMENT_TARGET := @MACOSX_VERSION_MIN@
+ 
+   ifneq ($(OPENJDK_TARGET_CPU), aarch64)
+diff --git a/closed/autoconf/ios-host-exec.sh b/closed/autoconf/ios-host-exec.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..50c527c46b75071112170c5a9beec9a598bcaae5
+--- /dev/null
++++ b/closed/autoconf/ios-host-exec.sh
+@@ -0,0 +1,160 @@
++#!/bin/sh
++# ===========================================================================
++# (c) Copyright IBM Corp. 2026 All Rights Reserved
++# ===========================================================================
++# This code is free software; you can redistribute it and/or modify it
++# under the terms of the GNU General Public License version 2 only, as
++# published by the Free Software Foundation.
++#
++# IBM designates this particular file as subject to the "Classpath" exception
++# as provided by IBM in the LICENSE file that accompanied this code.
++#
++# This code is distributed in the hope that it will be useful, but WITHOUT
++# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++# version 2 for more details (a copy is included in the LICENSE file that
++# accompanied this code).
++#
++# You should have received a copy of the GNU General Public License version
++# 2 along with this work; if not, see <http://www.gnu.org/licenses/>.
++# ===========================================================================
++
++# Usage: ios-host-exec.sh <executable> [args...]
++#
++# Runs an arm64 iOS (device or simulator) build tool, e.g. OMR hookgen,
++# tracegen, tracemerge or OpenJ9 constgen, on an arm64 macOS build host.
++# These tools only use libSystem and libc++, which have the same ABI on
++# arm64 macOS. The executable and the non-system dylibs it depends on
++# (resolved through @rpath, @loader_path, @executable_path or absolute
++# paths) are copied to a temporary directory, their platform is rewritten
++# to macOS with vtool, they are ad-hoc signed and the executable is run
++# with the given arguments in the current working directory. The exit
++# status of the tool is returned.
++
++if [ $# -lt 1 ] ; then
++  echo "Usage: $0 <executable> [args...]" >&2
++  exit 2
++fi
++
++exe="$1"
++shift
++
++if [ ! -f "$exe" ] ; then
++  echo "$0: no such executable: $exe" >&2
++  exit 2
++fi
++
++if xcrun --find vtool > /dev/null 2>&1 ; then
++  VTOOL="xcrun vtool"
++elif command -v vtool > /dev/null 2>&1 ; then
++  VTOOL=vtool
++else
++  echo "$0: vtool not found (neither via xcrun nor on PATH)" >&2
++  exit 2
++fi
++
++tmpdir=`mktemp -d "${TMPDIR:-/tmp}/ios-host-exec.XXXXXX"` || exit 2
++trap 'rm -rf "$tmpdir"' EXIT
++trap 'exit 129' HUP
++trap 'exit 130' INT
++trap 'exit 143' TERM
++
++exe_dir=$(cd "$(dirname "$exe")" && pwd) || exit 2
++exe_name=$(basename "$exe")
++exe="$exe_dir/$exe_name"
++
++# Rewrite the platform of Mach-O file $1 to macOS, writing $2, and ad-hoc sign it.
++convert() {
++  $VTOOL -set-build-version macos 11.0 11.0 -replace -output "$2" "$1" || return 1
++  codesign -s - -f "$2" > /dev/null 2>&1 || return 1
++}
++
++# Print the LC_RPATH entries of Mach-O file $1.
++rpaths() {
++  otool -l "$1" | awk '/cmd LC_RPATH/ { getline; getline; print $2 }'
++}
++
++# Print the non-system dylib dependencies of Mach-O file $1.
++dependencies() {
++  otool -L "$1" | awk 'NR > 1 { print $1 }' | while read dep ; do
++    case "$dep" in
++      /usr/lib/* | /System/*) ;;
++      *) echo "$dep" ;;
++    esac
++  done
++}
++
++# Resolve dependency $1 referenced by Mach-O file $2; print the path if found.
++resolve() {
++  ref_dir=`dirname "$2"`
++  case "$1" in
++    @rpath/*)
++      leaf="${1#@rpath/}"
++      for rp in `rpaths "$2"` `rpaths "$exe"` "$ref_dir" "$exe_dir" ; do
++        case "$rp" in
++          @loader_path*) rp="$ref_dir${rp#@loader_path}" ;;
++          @executable_path*) rp="$exe_dir${rp#@executable_path}" ;;
++        esac
++        if [ -f "$rp/$leaf" ] ; then
++          echo "$rp/$leaf"
++          return 0
++        fi
++      done
++      ;;
++    @loader_path/*)
++      candidate="$ref_dir/${1#@loader_path/}"
++      ;;
++    @executable_path/*)
++      candidate="$exe_dir/${1#@executable_path/}"
++      ;;
++    /*)
++      candidate="$1"
++      ;;
++    *)
++      candidate="$exe_dir/$1"
++      ;;
++  esac
++  if [ -n "$candidate" ] && [ -f "$candidate" ] ; then
++    echo "$candidate"
++  fi
++  candidate=
++}
++
++convert "$exe" "$tmpdir/$exe_name" || {
++  echo "$0: failed to convert $exe for the macOS host" >&2
++  exit 2
++}
++
++# Convert all (transitive) non-system dylib dependencies. dyld finds them by
++# leaf name in DYLD_LIBRARY_PATH before any other location.
++pending="$tmpdir/.pending"
++seen="$tmpdir/.seen"
++echo "$exe" > "$pending"
++echo "$exe" > "$seen"
++while [ -s "$pending" ] ; do
++  current=`head -n 1 "$pending"`
++  tail -n +2 "$pending" > "$pending.tmp"
++  mv "$pending.tmp" "$pending"
++  for dep in `dependencies "$current"` ; do
++    lib=`resolve "$dep" "$current"`
++    if [ -z "$lib" ] || grep -qxF "$lib" "$seen" ; then
++      continue
++    fi
++    echo "$lib" >> "$seen"
++    lib_name=`basename "$dep"`
++    if [ "$lib" = "$current" ] || [ -f "$tmpdir/$lib_name" ] ; then
++      continue
++    fi
++    convert "$lib" "$tmpdir/$lib_name" || {
++      echo "$0: failed to convert $lib for the macOS host" >&2
++      exit 2
++    }
++    echo "$lib" >> "$pending"
++  done
++done
++
++DYLD_LIBRARY_PATH="$tmpdir${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
++export DYLD_LIBRARY_PATH
++
++"$tmpdir/$exe_name" "$@"
++exit $?
+diff --git a/closed/autoconf/toolchain.cmake.in b/closed/autoconf/toolchain.cmake.in
+index 3a9b54e6e9d4ed2b02d6d644b1f4dc4f777d4b24..b815b8efeb7e7a6f301816ee4db7702bbd20081e 100644
+--- a/closed/autoconf/toolchain.cmake.in
++++ b/closed/autoconf/toolchain.cmake.in
+@@ -21,7 +21,10 @@
+ 
+ # Setting CMAKE_SYSTEM_NAME forces CMake into cross-compile mode, so only set it if we need to
+ # Note: We consider Windows to be a cross-compile since CMake considers cygwin to be a different platform than Windows.
+-if("@COMPILE_TYPE@" STREQUAL "cross" OR  "@OPENJDK_TARGET_OS@" STREQUAL "windows")
++if("@OPENJDK_TARGET_OS_ENV@" STREQUAL "macosx.ios")
++	# iOS (device or simulator) is always cross-compiled on a macOS host.
++	set(CMAKE_SYSTEM_NAME "iOS")
++elseif("@COMPILE_TYPE@" STREQUAL "cross" OR  "@OPENJDK_TARGET_OS@" STREQUAL "windows")
+ 	# CMAKE_SYSTEM_NAME expects the system name to start with a capital.
+ 	set(temp_system_name "@OPENJDK_TARGET_OS@")
+ 	string(SUBSTRING "${temp_system_name}" 0  1 first_char)
+@@ -30,7 +33,25 @@ if("@COMPILE_TYPE@" STREQUAL "cross" OR  "@OPENJDK_TARGET_OS@" STREQUAL "windows
+ 	set(CMAKE_SYSTEM_NAME "${first_char}${CMAKE_SYSTEM_NAME}")
+ endif()
+ 
+-set(CMAKE_SYSTEM_PROCESSOR "@OPENJDK_TARGET_CPU@")
++if("@OPENJDK_TARGET_OS_ENV@" STREQUAL "macosx.ios")
++	set(CMAKE_SYSTEM_PROCESSOR "arm64")
++	# The iOS SDK (iPhoneOS or iPhoneSimulator); this also selects the
++	# -miphoneos-version-min or -mios-simulator-version-min flag.
++	set(CMAKE_OSX_SYSROOT "@SYSROOT@" CACHE PATH "")
++	set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "")
++	set(CMAKE_OSX_DEPLOYMENT_TARGET "@IOS_VERSION_MIN@" CACHE STRING "")
++	# The target triple carries the same platform and minimum version.
++	set(CMAKE_C_COMPILER_TARGET "@IOS_TARGET_TRIPLE@")
++	set(CMAKE_CXX_COMPILER_TARGET "@IOS_TARGET_TRIPLE@")
++	set(CMAKE_ASM_COMPILER_TARGET "@IOS_TARGET_TRIPLE@")
++	# CMake defaults to application bundles for iOS executables; the build
++	# tools (hookgen, tracegen, constgen, ...) must be plain executables.
++	set(CMAKE_MACOSX_BUNDLE OFF)
++	# Build tools are run on the macOS host, so never search the SDK for programs.
++	set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
++else()
++	set(CMAKE_SYSTEM_PROCESSOR "@OPENJDK_TARGET_CPU@")
++endif()
+ 
+ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+ 	set(tool_dir "@OPENJ9_TOOL_DIR@")
+@@ -74,7 +95,9 @@ else()
+ 	endif()
+ endif()
+ 
+-if("@COMPILE_TYPE@" STREQUAL "cross")
++if("@COMPILE_TYPE@" STREQUAL "cross" AND NOT "@OPENJDK_TARGET_OS_ENV@" STREQUAL "macosx.ios")
++	# Note: For Apple targets the SDK is set via CMAKE_OSX_SYSROOT; CMAKE_SYSROOT
++	# would add a --sysroot option.
+ 	set(CMAKE_SYSROOT @SYSROOT@)
+ 	# Don't try searching for build tools in sysroot.
+ 	set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+diff --git a/closed/custom/common/Modules.gmk b/closed/custom/common/Modules.gmk
+index 6ef5ccd1dc8f07c570d32ff89cf886258886f5db..c3e62f45cec84fcd928b0b794a5dd1cf077f1d2b 100644
+--- a/closed/custom/common/Modules.gmk
++++ b/closed/custom/common/Modules.gmk
+@@ -50,6 +50,31 @@ MODULES_FILTER += \
+ 	jdk.jstatd \
+ 	#
+ 
++ifeq ($(OPENJDK_TARGET_OS_ENV), macosx.ios)
++  # iOS has no AWT/Swing/Java2D/sound (AppKit), no terminal console and no
++  # executables; leave out java.desktop, the modules that require it and
++  # modules that only make sense with a launcher or a desktop.
++  MODULES_FILTER += \
++	java.desktop \
++	java.se \
++	java.smartcardio \
++	jdk.accessibility \
++	jdk.editpad \
++	jdk.internal.ed \
++	jdk.internal.le \
++	jdk.jconsole \
++	jdk.jpackage \
++	jdk.jshell \
++	jdk.unsupported.desktop \
++	openj9.cuda \
++	openj9.dtfj \
++	openj9.dtfjview \
++	openj9.gpu \
++	#
++  BOOT_MODULES := $(filter-out $(MODULES_FILTER), $(BOOT_MODULES))
++  PLATFORM_MODULES := $(filter-out $(MODULES_FILTER), $(PLATFORM_MODULES))
++endif
++
+ TOP_SRC_DIRS += \
+ 	$(J9JCL_SOURCES_DIR) \
+ 	#
+diff --git a/closed/custom/modules/java.base/Copy.gmk b/closed/custom/modules/java.base/Copy.gmk
+index 2240cc8db92d9d5b5581a9e829d99721f85ce5fe..eb13707cda287a4e9ac6356d26d50a98f34bb7db 100644
+--- a/closed/custom/modules/java.base/Copy.gmk
++++ b/closed/custom/modules/java.base/Copy.gmk
+@@ -80,6 +80,12 @@ $(call openj9_copy_files_and_debuginfos, \
+ NO_JIT_PLATFORMS := linux_riscv64
+ TARGET_PLATFORM := $(OPENJDK_TARGET_OS)_$(OPENJDK_TARGET_CPU)
+ 
++# iOS shares OPENJDK_TARGET_OS/CPU with macOS (macosx_aarch64), but is
++# interpreter-only: iOS does not allow executable memory.
++ifeq ($(OPENJDK_TARGET_OS_ENV), macosx.ios)
++  NO_JIT_PLATFORMS += $(TARGET_PLATFORM)
++endif
++
+ $(call openj9_copy_shlibs, \
+ 	j9dmp29 \
+ 	j9gc29 \
+diff --git a/doc/building.html b/doc/building.html
+index cd3662e5b2a30ff95fbbf3185df939b19fdff371..8dae11a6698eb7829609c92b49c7566b35d02d53 100644
+--- a/doc/building.html
++++ b/doc/building.html
+@@ -118,6 +118,7 @@ Tests</a></li>
+ <li><a href="#cross-compiling"
+ id="toc-cross-compiling">Cross-compiling</a>
+ <ul>
++<li><a href="#openj9-for-ios" id="toc-openj9-for-ios">OpenJ9 for iOS</a></li>
+ <li><a href="#cross-compiling-the-easy-way-with-openjdk-devkits"
+ id="toc-cross-compiling-the-easy-way-with-openjdk-devkits">Cross
+ compiling the easy way with OpenJDK devkits</a></li>
+@@ -1186,6 +1187,29 @@ OS, on a 64-bit machine, consider using
+ <code>--with-target-bits=32</code> instead of doing a full-blown
+ cross-compilation. (While this surely is possible, it's a lot more work
+ and will take much longer to build.)</p>
++<h3 id="openj9-for-ios">OpenJ9 for iOS</h3>
++<p>The OpenJ9 iOS target is cross-compiled on an Apple Silicon Mac with Xcode.
++Use <code>--openjdk-target=aarch64-apple-ios</code> and
++<code>--with-sdk-name=iphoneos</code> for a device, or
++<code>--with-sdk-name=iphonesimulator</code> for the arm64 simulator. The option
++<code>--with-ios-version-min=15.0</code> selects the deployment minimum (15.0 by default).
++Pass a matching macOS Semeru JDK 21 as both <code>--with-boot-jdk</code> and
++<code>--with-build-jdk</code>, together with
++<code>--with-noncompressedrefs --disable-ddr --without-macosx-codesign</code>.</p>
++<p>The target retains the macOS Java source selection and module platform, but
++uses the iOS SDK and compiler target triple. Build tools use the macOS SDK.
++The OpenJ9 CMake build uses the <code>ios_aarch64</code> interpreter-only profile; its
++build-time generators are retargeted and ad-hoc signed by
++<code>closed/autoconf/ios-host-exec.sh</code> before running on the host.</p>
++<p>The image excludes desktop-dependent modules, macOS keychain and native
++Kerberos-cache libraries, and executable launchers. Process creation and
++the JDWP <code>launch=</code> option report an unsupported operation.
++Use <code>make jdk-image</code> to produce the target jmods for a host-side
++<code>jlink</code> invocation. The resulting libraries and Java home must be
++packaged in a signed iOS application; this build does not itself produce a
++deployable application. Interpreter-only execution does not guarantee App Store
++approval: public API use, signing, entitlements and App Review requirements apply
++separately.</p>
+ <h3 id="cross-compiling-the-easy-way-with-openjdk-devkits">Cross
+ compiling the easy way with OpenJDK devkits</h3>
+ <p>The OpenJDK build system provides out-of-the box support for creating
+diff --git a/doc/building.md b/doc/building.md
+index 45104bb499f0318f30038af3dfaac36d44c46bf3..54d3239f51120b4349763d5f42ccb2be039ddddf 100644
+--- a/doc/building.md
++++ b/doc/building.md
+@@ -959,6 +959,32 @@ If all you want to do is to compile a 32-bit version, for the same OS, on a
+ full-blown cross-compilation. (While this surely is possible, it's a lot more
+ work and will take much longer to build.)
+ 
++### OpenJ9 for iOS
++
++The OpenJ9 iOS target is cross-compiled on an Apple Silicon Mac with Xcode.
++Use `--openjdk-target=aarch64-apple-ios` and
++`--with-sdk-name=iphoneos` for a device, or
++`--with-sdk-name=iphonesimulator` for the arm64 simulator. The option
++`--with-ios-version-min=15.0` selects the deployment minimum (15.0 by default).
++Pass a matching macOS Semeru JDK 21 as both `--with-boot-jdk` and
++`--with-build-jdk`, together with `--with-noncompressedrefs --disable-ddr
++--without-macosx-codesign`.
++
++The target retains the macOS Java source selection and module platform, but
++uses the iOS SDK and compiler target triple. Build tools use the macOS SDK.
++The OpenJ9 CMake build uses the `ios_aarch64` interpreter-only profile; its
++build-time generators are retargeted and ad-hoc signed by
++`closed/autoconf/ios-host-exec.sh` before running on the host.
++
++The image excludes desktop-dependent modules, macOS keychain and native
++Kerberos-cache libraries, and executable launchers. Process creation and
++the JDWP `launch=` option report an unsupported operation. Use `make jdk-image`
++to produce the target jmods for a host-side `jlink` invocation. The resulting
++libraries and Java home must be packaged in a signed iOS application; this
++build does not itself produce a deployable application. Interpreter-only
++execution does not guarantee App Store approval: public API use, signing,
++entitlements and App Review requirements apply separately.
++
+ ### Cross compiling the easy way with OpenJDK devkits
+ 
+ The OpenJDK build system provides out-of-the box support for creating and using
+diff --git a/make/autoconf/boot-jdk.m4 b/make/autoconf/boot-jdk.m4
+index 9ecb53d64afaa7d23fcf7080c55d6e19d03f961b..74fbd9ac10786c658192b8ba1b6a74d6790922f0 100644
+--- a/make/autoconf/boot-jdk.m4
++++ b/make/autoconf/boot-jdk.m4
+@@ -612,7 +612,10 @@ AC_DEFUN([BOOTJDK_SETUP_BUILD_JDK],
+        fi])
+     EXTERNAL_BUILDJDK=true
+   else
+-    if test "x$COMPILE_TYPE" = "xcross"; then
++    if test "x$OPENJDK_TARGET_OS_ENV" = "xmacosx.ios"; then
++      # A build JDK for the host cannot be created as part of an iOS build.
++      AC_MSG_ERROR([Building for iOS requires --with-build-jdk pointing to a macOS JDK of version $VERSION_FEATURE])
++    elif test "x$COMPILE_TYPE" = "xcross"; then
+       BUILD_JDK="\$(BUILDJDK_OUTPUTDIR)/jdk"
+       BUILD_JDK_FOUND=yes
+       CREATE_BUILDJDK=true
+diff --git a/make/autoconf/flags-cflags.m4 b/make/autoconf/flags-cflags.m4
+index ab8c48e16d4f3cf74fe3697aa2863233d83e1c10..8e6cccabe0991a363a937d1f4e03bb0f513852c5 100644
+--- a/make/autoconf/flags-cflags.m4
++++ b/make/autoconf/flags-cflags.m4
+@@ -669,7 +669,13 @@ AC_DEFUN([FLAGS_SETUP_CFLAGS_HELPER],
+   # Set some additional per-OS defines.
+ 
+   # Additional macosx handling
+-  if test "x$OPENJDK_TARGET_OS" = xmacosx; then
++  if test "x$OPENJDK_TARGET_OS_ENV" = "xmacosx.ios"; then
++    # The iOS target toolchain gets the platform and minimum version from
++    # -target in MACHINE_FLAG. Only the build toolchain, which produces
++    # macOS binaries, gets the macOS version flags.
++    BUILD_OS_VERSION_CFLAGS="-DMAC_OS_X_VERSION_MIN_REQUIRED=$MACOSX_VERSION_MIN_NODOTS \
++        -mmacosx-version-min=$MACOSX_VERSION_MIN"
++  elif test "x$OPENJDK_TARGET_OS" = xmacosx; then
+     OS_CFLAGS="-DMAC_OS_X_VERSION_MIN_REQUIRED=$MACOSX_VERSION_MIN_NODOTS \
+         -mmacosx-version-min=$MACOSX_VERSION_MIN"
+ 
+@@ -943,12 +949,12 @@ AC_DEFUN([FLAGS_SETUP_CFLAGS_CPU_DEP],
+   # EXPORT to API
+   CFLAGS_JVM_COMMON="$ALWAYS_CFLAGS_JVM $ALWAYS_DEFINES_JVM \
+       $TOOLCHAIN_CFLAGS_JVM ${$1_TOOLCHAIN_CFLAGS_JVM} \
+-      $OS_CFLAGS $OS_CFLAGS_JVM $CFLAGS_OS_DEF_JVM $DEBUG_CFLAGS_JVM \
++      $OS_CFLAGS ${$1_OS_VERSION_CFLAGS} $OS_CFLAGS_JVM $CFLAGS_OS_DEF_JVM $DEBUG_CFLAGS_JVM \
+       $WARNING_CFLAGS $WARNING_CFLAGS_JVM $JVM_PICFLAG $FILE_MACRO_CFLAGS \
+       $REPRODUCIBLE_CFLAGS $BRANCH_PROTECTION_CFLAGS"
+ 
+   CFLAGS_JDK_COMMON="$ALWAYS_CFLAGS_JDK $ALWAYS_DEFINES_JDK $TOOLCHAIN_CFLAGS_JDK \
+-      $OS_CFLAGS $CFLAGS_OS_DEF_JDK $DEBUG_CFLAGS_JDK $DEBUG_OPTIONS_FLAGS_JDK \
++      $OS_CFLAGS ${$1_OS_VERSION_CFLAGS} $CFLAGS_OS_DEF_JDK $DEBUG_CFLAGS_JDK $DEBUG_OPTIONS_FLAGS_JDK \
+       $WARNING_CFLAGS $WARNING_CFLAGS_JDK $DEBUG_SYMBOLS_CFLAGS_JDK \
+       $FILE_MACRO_CFLAGS $REPRODUCIBLE_CFLAGS $BRANCH_PROTECTION_CFLAGS"
+ 
+diff --git a/make/autoconf/flags-ldflags.m4 b/make/autoconf/flags-ldflags.m4
+index 6b285f207030a14a50a42b6f588da4bab39d2f30..3ca852a24302e1ad2b38aea4625b8b35662d57f9 100644
+--- a/make/autoconf/flags-ldflags.m4
++++ b/make/autoconf/flags-ldflags.m4
+@@ -110,7 +110,14 @@ AC_DEFUN([FLAGS_SETUP_LDFLAGS_HELPER],
+     fi
+     # FIXME: We should really generalize SET_SHARED_LIBRARY_ORIGIN instead.
+     OS_LDFLAGS_JVM_ONLY="-Wl,-rpath,@loader_path/. -Wl,-rpath,@loader_path/.."
+-    OS_LDFLAGS="-mmacosx-version-min=$MACOSX_VERSION_MIN"
++    if test "x$OPENJDK_TARGET_OS_ENV" = "xmacosx.ios"; then
++      # The iOS target toolchain gets the platform and minimum version from
++      # -target in MACHINE_FLAG. Only the build toolchain, which produces
++      # macOS binaries, gets the macOS version flag.
++      BUILD_OS_VERSION_LDFLAGS="-mmacosx-version-min=$MACOSX_VERSION_MIN"
++    else
++      OS_LDFLAGS="-mmacosx-version-min=$MACOSX_VERSION_MIN"
++    fi
+   fi
+ 
+   # Setup debug level-dependent LDFLAGS
+@@ -217,14 +224,14 @@ AC_DEFUN([FLAGS_SETUP_LDFLAGS_CPU_DEP],
+ 
+   # Export variables according to old definitions, prefix with $2 if present.
+   LDFLAGS_JDK_COMMON="$BASIC_LDFLAGS $BASIC_LDFLAGS_JDK_ONLY \
+-      $OS_LDFLAGS $DEBUGLEVEL_LDFLAGS_JDK_ONLY ${$2EXTRA_LDFLAGS}"
++      $OS_LDFLAGS ${$1_OS_VERSION_LDFLAGS} $DEBUGLEVEL_LDFLAGS_JDK_ONLY ${$2EXTRA_LDFLAGS}"
+   $2LDFLAGS_JDKLIB="$LDFLAGS_JDK_COMMON $BASIC_LDFLAGS_JDK_LIB_ONLY \
+       ${$1_LDFLAGS_JDK_LIBPATH} $SHARED_LIBRARY_FLAGS \
+       $REPRODUCIBLE_LDFLAGS $FILE_MACRO_LDFLAGS"
+   $2LDFLAGS_JDKEXE="$LDFLAGS_JDK_COMMON $EXECUTABLE_LDFLAGS \
+       ${$1_CPU_EXECUTABLE_LDFLAGS} $REPRODUCIBLE_LDFLAGS $FILE_MACRO_LDFLAGS"
+ 
+-  $2JVM_LDFLAGS="$BASIC_LDFLAGS $BASIC_LDFLAGS_JVM_ONLY $OS_LDFLAGS $OS_LDFLAGS_JVM_ONLY \
++  $2JVM_LDFLAGS="$BASIC_LDFLAGS $BASIC_LDFLAGS_JVM_ONLY $OS_LDFLAGS ${$1_OS_VERSION_LDFLAGS} $OS_LDFLAGS_JVM_ONLY \
+       $DEBUGLEVEL_LDFLAGS $DEBUGLEVEL_LDFLAGS_JVM_ONLY $BASIC_LDFLAGS_ONLYCXX \
+       ${$1_CPU_LDFLAGS} ${$1_CPU_LDFLAGS_JVM_ONLY} ${$2EXTRA_LDFLAGS} \
+       $REPRODUCIBLE_LDFLAGS $FILE_MACRO_LDFLAGS"
+diff --git a/make/autoconf/flags-other.m4 b/make/autoconf/flags-other.m4
+index 0af7c02cff6c22ac7df8b835b1f663f4b68edb7f..423ba92e719b3f962f65016fab8425fe669c6c4e 100644
+--- a/make/autoconf/flags-other.m4
++++ b/make/autoconf/flags-other.m4
+@@ -115,13 +115,16 @@ AC_DEFUN([FLAGS_SETUP_ASFLAGS],
+ 
+     # Fix linker warning.
+     # Code taken from make/autoconf/flags-cflags.m4 and adapted.
+-    JVM_BASIC_ASFLAGS="$JVM_BASIC_ASFLAGS \
+-        -DMAC_OS_X_VERSION_MIN_REQUIRED=$MACOSX_VERSION_MIN_NODOTS \
+-        -mmacosx-version-min=$MACOSX_VERSION_MIN"
+-
+-    if test -n "$MACOSX_VERSION_MAX"; then
+-        JVM_BASIC_ASFLAGS="$JVM_BASIC_ASFLAGS $OS_CFLAGS \
+-            -DMAC_OS_X_VERSION_MAX_ALLOWED=$MACOSX_VERSION_MAX_NODOTS"
++    # For iOS targets the platform and version come from -target instead.
++    if test "x$OPENJDK_TARGET_OS_ENV" != "xmacosx.ios"; then
++      JVM_BASIC_ASFLAGS="$JVM_BASIC_ASFLAGS \
++          -DMAC_OS_X_VERSION_MIN_REQUIRED=$MACOSX_VERSION_MIN_NODOTS \
++          -mmacosx-version-min=$MACOSX_VERSION_MIN"
++
++      if test -n "$MACOSX_VERSION_MAX"; then
++          JVM_BASIC_ASFLAGS="$JVM_BASIC_ASFLAGS $OS_CFLAGS \
++              -DMAC_OS_X_VERSION_MAX_ALLOWED=$MACOSX_VERSION_MAX_NODOTS"
++      fi
+     fi
+   fi
+ ])
+diff --git a/make/autoconf/flags.m4 b/make/autoconf/flags.m4
+index 373c3680f6460f9cd13b9666f81cb85715b33162..121d49e8dfd28a704ab4db1f91217d26d89356ba 100644
+--- a/make/autoconf/flags.m4
++++ b/make/autoconf/flags.m4
+@@ -162,6 +162,76 @@ AC_DEFUN([FLAGS_SETUP_MACOSX_VERSION],
+   fi
+ ])
+ 
++# Setup the iOS target (OPENJDK_TARGET_OS_ENV=macosx.ios): the minimum iOS
++# version, whether the target is the simulator or a device, and the clang
++# target triple used for the target toolchain. Must be called after the
++# sysroot has been setup and before the target compilers are tested.
++AC_DEFUN([FLAGS_SETUP_IOS_TARGET],
++[
++  AC_ARG_WITH([ios-version-min], [AS_HELP_STRING([--with-ios-version-min],
++      [lowest iOS version the built binaries run on, only used for iOS targets @<:@15.0@:>@])])
++
++  IOS_VERSION_MIN=
++  IOS_SIMULATOR=false
++  IOS_TARGET_TRIPLE=
++
++  if test "x$OPENJDK_TARGET_OS_ENV" = "xmacosx.ios"; then
++    if test "x$OPENJDK_TARGET_CPU" != xaarch64; then
++      AC_MSG_ERROR([iOS targets are only supported for aarch64, not $OPENJDK_TARGET_CPU])
++    fi
++
++    AC_MSG_CHECKING([for lowest supported iOS version])
++    if test "x$with_ios_version_min" = x; then
++      IOS_VERSION_MIN=15.0
++    elif echo "$with_ios_version_min" | $GREP -q "^[[0-9]][[0-9]]*\(\.[[0-9]][[0-9]]*\)\{1,2\}\$"; then
++      IOS_VERSION_MIN=$with_ios_version_min
++    else
++      AC_MSG_ERROR([--with-ios-version-min format must be n.n or n.n.n, got '$with_ios_version_min'])
++    fi
++    AC_MSG_RESULT([$IOS_VERSION_MIN])
++
++    AC_MSG_CHECKING([if the iOS target is the simulator])
++    # The sysroot is authoritative; fall back to the requested sdk name.
++    case "$SYSROOT" in
++      *iPhoneSimulator*)
++        IOS_SIMULATOR=true
++        ;;
++      *iPhoneOS*)
++        IOS_SIMULATOR=false
++        ;;
++      *)
++        case "$SDK_NAME" in
++          iphonesimulator*)
++            IOS_SIMULATOR=true
++            ;;
++          iphoneos*)
++            IOS_SIMULATOR=false
++            ;;
++          *)
++            AC_MSG_RESULT([unknown])
++            AC_MSG_ERROR([Cannot determine the iOS SDK from sysroot '$SYSROOT' and sdk name '$SDK_NAME'. Use --with-sdk-name=iphoneos or --with-sdk-name=iphonesimulator])
++            ;;
++        esac
++        ;;
++    esac
++    AC_MSG_RESULT([$IOS_SIMULATOR])
++
++    if test "x$IOS_SIMULATOR" = xtrue; then
++      IOS_TARGET_TRIPLE="arm64-apple-ios$IOS_VERSION_MIN-simulator"
++    else
++      IOS_TARGET_TRIPLE="arm64-apple-ios$IOS_VERSION_MIN"
++    fi
++    AC_MSG_CHECKING([for iOS target triple])
++    AC_MSG_RESULT([$IOS_TARGET_TRIPLE])
++  elif test "x$with_ios_version_min" != x; then
++    AC_MSG_WARN([--with-ios-version-min is only used for iOS targets, ignoring])
++  fi
++
++  AC_SUBST(IOS_VERSION_MIN)
++  AC_SUBST(IOS_SIMULATOR)
++  AC_SUBST(IOS_TARGET_TRIPLE)
++])
++
+ # Reset the global CFLAGS/LDFLAGS variables and initialize them with the
+ # corresponding configure arguments instead
+ AC_DEFUN_ONCE([FLAGS_SETUP_USER_SUPPLIED_FLAGS],
+@@ -261,6 +331,9 @@ AC_DEFUN_ONCE([FLAGS_PRE_TOOLCHAIN],
+   # The sysroot flags are needed for configure to be able to run the compilers
+   FLAGS_SETUP_SYSROOT_FLAGS
+ 
++  # iOS target settings are needed for the target triple below
++  FLAGS_SETUP_IOS_TARGET
++
+   # For xlc, the word size flag is required for correct behavior.
+   # For clang/gcc, the flag is only strictly required for reduced builds, but
+   # set it always where possible (x86 and ppc).
+@@ -274,7 +347,12 @@ AC_DEFUN_ONCE([FLAGS_PRE_TOOLCHAIN],
+     fi
+   fi
+ 
+-  if test "x$OPENJDK_TARGET_OS" = xmacosx; then
++  if test "x$OPENJDK_TARGET_OS_ENV" = "xmacosx.ios"; then
++    # The target triple selects the arch, the platform (iOS device or
++    # simulator) and the minimum iOS version. No -mmacosx-version-min must
++    # be used together with it.
++    MACHINE_FLAG="$MACHINE_FLAG -target $IOS_TARGET_TRIPLE"
++  elif test "x$OPENJDK_TARGET_OS" = xmacosx; then
+     if test "x$OPENJDK_TARGET_CPU" = xaarch64; then
+       MACHINE_FLAG="$MACHINE_FLAG -arch arm64"
+     elif test "x$OPENJDK_TARGET_CPU" = xx86_64; then
+diff --git a/make/autoconf/libraries.m4 b/make/autoconf/libraries.m4
+index 51d4f724c339d94b6245fb63dd161cfbdae4a23d..fd64904b9450d3c00625a9aa463fd70eb4fa7c5b 100644
+--- a/make/autoconf/libraries.m4
++++ b/make/autoconf/libraries.m4
+@@ -65,6 +65,9 @@ AC_DEFUN_ONCE([LIB_DETERMINE_DEPENDENCIES],
+   if test "x$OPENJDK_TARGET_OS" = xwindows; then
+     # Windows have a separate print system
+     NEEDS_LIB_CUPS=false
++  elif test "x$OPENJDK_TARGET_OS_ENV" = "xmacosx.ios"; then
++    # iOS has no cups and java.desktop is not built for iOS
++    NEEDS_LIB_CUPS=false
+   else
+     NEEDS_LIB_CUPS=true
+   fi
+diff --git a/make/autoconf/platform.m4 b/make/autoconf/platform.m4
+index 14de712b53950a8ea0c13e66141f290c0736fa43..04c3d23ff2795b3ef959da05a3ca0a07b72f0df5 100644
+--- a/make/autoconf/platform.m4
++++ b/make/autoconf/platform.m4
+@@ -206,6 +206,12 @@ AC_DEFUN([PLATFORM_EXTRACT_VARS_FROM_OS],
+       VAR_OS=macosx
+       VAR_OS_TYPE=unix
+       ;;
++    *ios*)
++      # iOS (device and simulator) is built as a variant of macosx.
++      VAR_OS=macosx
++      VAR_OS_TYPE=unix
++      VAR_OS_ENV=macosx.ios
++      ;;
+     *bsd*)
+       VAR_OS=bsd
+       VAR_OS_TYPE=unix
+diff --git a/make/autoconf/spec.gmk.in b/make/autoconf/spec.gmk.in
+index 7f085676ca97bf2c2fed9fe04adb68023b9566ad..1ca56020817d6103bc52e128d55aa497a2b70d36 100644
+--- a/make/autoconf/spec.gmk.in
++++ b/make/autoconf/spec.gmk.in
+@@ -472,6 +472,14 @@ MACOSX_VERSION_MIN=@MACOSX_VERSION_MIN@
+ # The highest allowed version of macosx
+ MACOSX_VERSION_MAX=@MACOSX_VERSION_MAX@
+ 
++# iOS target settings (only set when OPENJDK_TARGET_OS_ENV is macosx.ios)
++# The lowest required version of iOS
++IOS_VERSION_MIN:=@IOS_VERSION_MIN@
++# true when targeting the iOS simulator, false for iOS devices
++IOS_SIMULATOR:=@IOS_SIMULATOR@
++# The clang target triple used for the iOS target toolchain
++IOS_TARGET_TRIPLE:=@IOS_TARGET_TRIPLE@
++
+ # The macosx code signing configuration
+ MACOSX_CODESIGN_MODE:=@MACOSX_CODESIGN_MODE@
+ MACOSX_CODESIGN_IDENTITY=@MACOSX_CODESIGN_IDENTITY@
+diff --git a/make/autoconf/toolchain.m4 b/make/autoconf/toolchain.m4
+index a2b576ac1ab37e2b5d58af0ce688d19914c6bb69..04586e990abb4e31e0fe4b8d4df0b792b162b97e 100644
+--- a/make/autoconf/toolchain.m4
++++ b/make/autoconf/toolchain.m4
+@@ -756,8 +756,10 @@ AC_DEFUN_ONCE([TOOLCHAIN_DETECT_TOOLCHAIN_EXTRA],
+     UTIL_REQUIRE_PROGS(OTOOL, otool)
+     UTIL_REQUIRE_PROGS(INSTALL_NAME_TOOL, install_name_tool)
+ 
++    # metal and metallib are only needed by java.desktop, which is not built
++    # for iOS, so they are optional there.
+     UTIL_LOOKUP_TOOLCHAIN_PROGS(METAL, metal)
+-    if test "x$METAL" = x; then
++    if test "x$METAL" = x && test "x$OPENJDK_TARGET_OS_ENV" != "xmacosx.ios"; then
+       AC_MSG_CHECKING([if metal can be run using xcrun])
+       METAL="xcrun -sdk macosx metal"
+       test_metal=`$METAL --version 2>&1`
+@@ -770,7 +772,7 @@ AC_DEFUN_ONCE([TOOLCHAIN_DETECT_TOOLCHAIN_EXTRA],
+     fi
+ 
+     UTIL_LOOKUP_TOOLCHAIN_PROGS(METALLIB, metallib)
+-    if test "x$METALLIB" = x; then
++    if test "x$METALLIB" = x && test "x$OPENJDK_TARGET_OS_ENV" != "xmacosx.ios"; then
+       AC_MSG_CHECKING([if metallib can be run using xcrun])
+       METALLIB="xcrun -sdk macosx metallib"
+       test_metallib=`$METALLIB --version 2>&1`
+@@ -950,6 +952,24 @@ AC_DEFUN_ONCE([TOOLCHAIN_SETUP_BUILD_COMPILERS],
+ 
+     PATH="$OLDPATH"
+ 
++    if test "x$OPENJDK_TARGET_OS_ENV" = "xmacosx.ios" && test "x$BUILD_SYSROOT" = x; then
++      # The build toolchain must produce macOS binaries. Use the macOS SDK
++      # explicitly so that neither the iOS sysroot nor SDKROOT from the
++      # environment can leak into the build compiler.
++      build_xcrun="$XCRUN"
++      if test "x$build_xcrun" = x; then
++        build_xcrun=xcrun
++      fi
++      AC_MSG_CHECKING([for macOS sysroot for the build toolchain])
++      BUILD_SYSROOT=`$build_xcrun --sdk macosx --show-sdk-path 2> /dev/null`
++      if test "x$BUILD_SYSROOT" = x || \
++          ! test -f "$BUILD_SYSROOT/System/Library/Frameworks/Foundation.framework/Headers/Foundation.h"; then
++        AC_MSG_RESULT([not found])
++        AC_MSG_ERROR([Unable to find the macOS SDK for the build toolchain, use --with-build-devkit])
++      fi
++      AC_MSG_RESULT([$BUILD_SYSROOT])
++    fi
++
+     TOOLCHAIN_EXTRACT_COMPILER_VERSION(BUILD_CC, [BuildC])
+     TOOLCHAIN_EXTRACT_COMPILER_VERSION(BUILD_CXX, [BuildC++])
+     TOOLCHAIN_PREPARE_FOR_VERSION_COMPARISONS([BUILD_], [OPENJDK_BUILD_], [build ])
+diff --git a/make/common/Utils.gmk b/make/common/Utils.gmk
+index 99d991386b5d96112c86feb166264fa6aa9b53db..6acd48b461a6022160e7503323087e18f6a1da4a 100644
+--- a/make/common/Utils.gmk
++++ b/make/common/Utils.gmk
+@@ -345,6 +345,9 @@ isTargetOs = \
+ isTargetOsType = \
+   $(strip $(if $(filter $(OPENJDK_TARGET_OS_TYPE), $1), true, false))
+ 
++isTargetOsEnv = \
++  $(strip $(if $(filter $(OPENJDK_TARGET_OS_ENV), $1), true, false))
++
+ isTargetCpu = \
+   $(strip $(if $(filter $(OPENJDK_TARGET_CPU), $1), true, false))
+ 
+diff --git a/make/common/modules/LauncherCommon.gmk b/make/common/modules/LauncherCommon.gmk
+index fb218292791617dab0a1d80402f404918f6880bc..b975688c0cac9ed8c13b8cb565cc34ec18584bb2 100644
+--- a/make/common/modules/LauncherCommon.gmk
++++ b/make/common/modules/LauncherCommon.gmk
+@@ -79,7 +79,12 @@ JAVA_MANIFEST := $(TOPDIR)/src/java.base/windows/native/launcher/java.manifest
+ # OPTIMIZATION   Override default optimization level (LOW)
+ # OUTPUT_DIR   Override default output directory
+ # VERSION_INFO_RESOURCE   Override default Windows resource file
+-SetupBuildLauncher = $(NamedParamsMacroTemplate)
++ifeq ($(OPENJDK_TARGET_OS_ENV), macosx.ios)
++  # iOS apps cannot run separate executables; no launchers are built.
++  SetupBuildLauncher =
++else
++  SetupBuildLauncher = $(NamedParamsMacroTemplate)
++endif
+ define SetupBuildLauncherBody
+   # Setup default values (unless overridden)
+ 
+diff --git a/make/modules/java.base/Gendata.gmk b/make/modules/java.base/Gendata.gmk
+index 9e5cfe2d0fc40e10ff9c66e8e225ea154102a008..eb33397ef312abb4c03bcad3d2b38393ce45f08d 100644
+--- a/make/modules/java.base/Gendata.gmk
++++ b/make/modules/java.base/Gendata.gmk
+@@ -87,12 +87,18 @@ else
+     CRYPTO.POLICY := limited
+ endif
+ 
++# Do not register the macOS-only Apple keychain provider in an iOS image.
++JAVA_SECURITY_OS := $(OPENJDK_TARGET_OS)
++ifeq ($(call isTargetOsEnv, macosx.ios), true)
++  JAVA_SECURITY_OS := ios
++endif
++
+ # RESTRICTED_PKGS_SRC is optionally set in custom extension for this makefile
+ 
+ $(GENDATA_JAVA_SECURITY): $(BUILD_TOOLS_JDK) $(GENDATA_JAVA_SECURITY_SRC) $(RESTRICTED_PKGS_SRC)
+ 	$(call LogInfo, Generating java.security)
+ 	$(call MakeTargetDir)
+-	$(TOOL_MAKEJAVASECURITY) $(GENDATA_JAVA_SECURITY_SRC) $@ $(OPENJDK_TARGET_OS) \
++	$(TOOL_MAKEJAVASECURITY) $(GENDATA_JAVA_SECURITY_SRC) $@ $(JAVA_SECURITY_OS) \
+ 	    $(OPENJDK_TARGET_CPU_ARCH) $(CRYPTO.POLICY) $(RESTRICTED_PKGS_SRC)
+ 
+ TARGETS += $(GENDATA_JAVA_SECURITY)
+diff --git a/make/modules/java.base/Launcher.gmk b/make/modules/java.base/Launcher.gmk
+index 64db79060c458d7cd0bf14245eabb04dcc5434d1..9c0cd917f1d395bd76e32869dc023fb5ac703d3b 100644
+--- a/make/modules/java.base/Launcher.gmk
++++ b/make/modules/java.base/Launcher.gmk
+@@ -73,7 +73,8 @@ endif
+ 
+ ################################################################################
+ 
+-ifeq ($(call isTargetOs, macosx aix linux), true)
++# iOS apps cannot run separate executables, so no jspawnhelper there.
++ifeq ($(call isTargetOs, macosx aix linux)+$(call isTargetOsEnv, macosx.ios), true+false)
+   $(eval $(call SetupJdkExecutable, BUILD_JSPAWNHELPER, \
+       NAME := jspawnhelper, \
+       SRC := $(TOPDIR)/src/$(MODULE)/unix/native/jspawnhelper, \
+diff --git a/make/modules/java.base/Lib.gmk b/make/modules/java.base/Lib.gmk
+index d6429b588ae09cc871f9b23a0f9d2eb6fca21cb4..ae97841fefbc990900253171e686a2b28d257579 100644
+--- a/make/modules/java.base/Lib.gmk
++++ b/make/modules/java.base/Lib.gmk
+@@ -43,6 +43,14 @@ include lib/CoreLibraries.gmk
+ ################################################################################
+ # Create the network library
+ 
++ifeq ($(call isTargetOsEnv, macosx.ios), true)
++  LIBNET_LIBS_macosx := -framework CoreFoundation -framework CFNetwork
++  LIBNIO_LIBS_macosx := -framework CoreFoundation -framework MobileCoreServices
++else
++  LIBNET_LIBS_macosx := -framework CoreFoundation -framework CoreServices
++  LIBNIO_LIBS_macosx := -framework CoreFoundation -framework CoreServices
++endif
++
+ $(eval $(call SetupJdkLibrary, BUILD_LIBNET, \
+     NAME := net, \
+     OPTIMIZATION := LOW, \
+@@ -62,7 +70,7 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBNET, \
+     LIBS_aix := $(LIBDL),\
+     LIBS_windows := ws2_32.lib jvm.lib secur32.lib iphlpapi.lib winhttp.lib \
+         delayimp.lib $(WIN_JAVA_LIB) advapi32.lib, \
+-    LIBS_macosx := -framework CoreFoundation -framework CoreServices, \
++    LIBS_macosx := $(LIBNET_LIBS_macosx), \
+ ))
+ 
+ $(BUILD_LIBNET): $(BUILD_LIBJAVA)
+@@ -106,8 +114,7 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBNIO, \
+     LIBS_unix := -ljava -lnet, \
+     LIBS_linux := -lpthread $(LIBDL), \
+     LIBS_aix := $(LIBDL), \
+-    LIBS_macosx := \
+-        -framework CoreFoundation -framework CoreServices, \
++    LIBS_macosx := $(LIBNIO_LIBS_macosx), \
+     LIBS_windows := jvm.lib Mswsock.lib ws2_32.lib $(WIN_JAVA_LIB) \
+         $(SUPPORT_OUTPUTDIR)/native/$(MODULE)/libnet/net.lib \
+         advapi32.lib, \
+@@ -120,7 +127,7 @@ $(BUILD_LIBNIO): $(BUILD_LIBNET)
+ ################################################################################
+ # Create the macosx security library
+ 
+-ifeq ($(call isTargetOs, macosx), true)
++ifeq ($(call isTargetOs, macosx)+$(call isTargetOsEnv, macosx.ios), true+false)
+ 
+     $(eval $(call SetupJdkLibrary, BUILD_LIBOSXSECURITY, \
+         NAME := osxsecurity, \
+diff --git a/make/modules/java.base/lib/CoreLibraries.gmk b/make/modules/java.base/lib/CoreLibraries.gmk
+index d931eff54ab525de3cb7be5e877f84c4e0197d43..70f5fc221b73c5b88a6fe68a4f506af016f78b28 100644
+--- a/make/modules/java.base/lib/CoreLibraries.gmk
++++ b/make/modules/java.base/lib/CoreLibraries.gmk
+@@ -90,6 +90,17 @@ ifeq ($(call isTargetOs, macosx), true)
+   BUILD_LIBJAVA_java_props_macosx.c_CFLAGS := -x objective-c
+ endif
+ 
++ifeq ($(call isTargetOsEnv, macosx.ios), true)
++  # SystemConfiguration proxy APIs are macOS-only; iOS uses CFNetwork.
++  LIBJAVA_LIBS_macosx := -framework CoreFoundation \
++      -framework Foundation \
++      -framework CFNetwork
++else
++  LIBJAVA_LIBS_macosx := -framework CoreFoundation \
++      -framework Foundation \
++      -framework SystemConfiguration
++endif
++
+ $(eval $(call SetupJdkLibrary, BUILD_LIBJAVA, \
+     NAME := java, \
+     OPTIMIZATION := HIGH, \
+@@ -130,9 +141,7 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBJAVA, \
+     LIBS_unix := -ljvm, \
+     LIBS_linux := $(LIBDL), \
+     LIBS_aix := $(LIBDL) $(LIBM),\
+-    LIBS_macosx := -framework CoreFoundation \
+-        -framework Foundation \
+-        -framework SystemConfiguration, \
++    LIBS_macosx := $(LIBJAVA_LIBS_macosx), \
+     LIBS_windows := jvm.lib \
+         shell32.lib delayimp.lib \
+         advapi32.lib version.lib, \
+@@ -196,6 +205,12 @@ TARGETS += $(BUILD_LIBJIMAGE)
+ 
+ ifeq ($(call isTargetOs, macosx), true)
+   LIBJLI_EXCLUDE_FILES += java_md.c
++  ifeq ($(call isTargetOsEnv, macosx.ios), true)
++    # iOS has no Cocoa (AppKit); libjli only needs Foundation there.
++    LIBJLI_LIBS_macosx := -framework Foundation -framework CoreFoundation
++  else
++    LIBJLI_LIBS_macosx := -framework Cocoa -framework Security -framework ApplicationServices
++  endif
+ endif
+ 
+ ifeq ($(call isTargetOs, windows), true)
+@@ -239,7 +254,7 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBJLI, \
+     LIBS_unix := $(LIBZ_LIBS), \
+     LIBS_linux := $(LIBDL) -lpthread, \
+     LIBS_aix := $(LIBDL),\
+-    LIBS_macosx := -framework Cocoa -framework Security -framework ApplicationServices, \
++    LIBS_macosx := $(LIBJLI_LIBS_macosx), \
+     LIBS_windows := advapi32.lib comctl32.lib user32.lib, \
+ ))
+ 
+diff --git a/make/modules/java.instrument/Lib.gmk b/make/modules/java.instrument/Lib.gmk
+index ae985b3158fcf66090378490cff1fdee84031e16..127e99b417cbdc74ee4b5dd9100c9cdf93cf6526 100644
+--- a/make/modules/java.instrument/Lib.gmk
++++ b/make/modules/java.instrument/Lib.gmk
+@@ -33,6 +33,13 @@ ifeq ($(call isTargetOs, windows), true)
+   WINDOWS_JLI_LIB := $(SUPPORT_OUTPUTDIR)/native/java.base/libjli/jli.lib
+ endif
+ 
++ifeq ($(call isTargetOsEnv, macosx.ios), true)
++  LIBINSTRUMENT_LIBS_macosx := -ljli -liconv
++else
++  LIBINSTRUMENT_LIBS_macosx := -ljli -liconv -framework Cocoa -framework Security \
++      -framework ApplicationServices
++endif
++
+ $(eval $(call SetupJdkLibrary, BUILD_LIBINSTRUMENT, \
+     NAME := instrument, \
+     OPTIMIZATION := LOW, \
+@@ -50,8 +57,7 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBINSTRUMENT, \
+     LIBS_unix := -ljava -ljvm $(LIBZ_LIBS), \
+     LIBS_linux := -ljli $(LIBDL), \
+     LIBS_aix := -liconv -ljli_static $(LIBDL), \
+-    LIBS_macosx := -ljli -liconv -framework Cocoa -framework Security \
+-        -framework ApplicationServices, \
++    LIBS_macosx := $(LIBINSTRUMENT_LIBS_macosx), \
+     LIBS_windows := jvm.lib $(WIN_JAVA_LIB) advapi32.lib \
+         $(WINDOWS_JLI_LIB), \
+ ))
+diff --git a/make/modules/java.security.jgss/Lib.gmk b/make/modules/java.security.jgss/Lib.gmk
+index fcd46b4404434f16b9a2a60c7b428cd6050156dc..fcb6f620d708c6f9b5c9e2da0d5e44fc76604000 100644
+--- a/make/modules/java.security.jgss/Lib.gmk
++++ b/make/modules/java.security.jgss/Lib.gmk
+@@ -72,7 +72,7 @@ ifneq ($(BUILD_CRYPTO), false)
+     TARGETS += $(BUILD_LIBW2K_LSA_AUTH)
+   endif
+ 
+-  ifeq ($(call isTargetOs, macosx), true)
++  ifeq ($(call isTargetOs, macosx)+$(call isTargetOsEnv, macosx.ios), true+false)
+     # libosxkrb5 needs to call deprecated krb5 APIs so that java
+     # can use the native credentials cache.
+     $(eval $(call SetupJdkLibrary, BUILD_LIBOSXKRB5, \
+diff --git a/src/java.base/macosx/native/libjava/java_props_macosx.c b/src/java.base/macosx/native/libjava/java_props_macosx.c
+index f50daac13cb6ae08e69737482ac4aff8d8ffec41..edfa39a704237177ad9a0deff4f3f5209a32b2a1 100644
+--- a/src/java.base/macosx/native/libjava/java_props_macosx.c
++++ b/src/java.base/macosx/native/libjava/java_props_macosx.c
+@@ -26,10 +26,20 @@
+ #include <sys/socket.h>
+ #include <netinet/in.h>
+ #include <arpa/inet.h>
++#include <TargetConditionals.h>
++#if TARGET_OS_IPHONE
++#include <objc/runtime.h>
++#else
+ #include <objc/objc-runtime.h>
++#endif
+ 
+ #include <CoreFoundation/CoreFoundation.h>
++#if TARGET_OS_IPHONE
++/* SystemConfiguration's proxy API is macOS-only; iOS uses CFNetwork. */
++#include <CFNetwork/CFNetwork.h>
++#else
+ #include <SystemConfiguration/SystemConfiguration.h>
++#endif
+ #include <Foundation/Foundation.h>
+ 
+ #include "java_props_macosx.h"
+@@ -232,10 +242,20 @@ typedef struct {
+ 
+ void setOSNameAndVersion(java_props_t *sprops) {
+     // Hardcode os_name, and fill in os_version
++#if TARGET_OS_IPHONE
++    sprops->os_name = strdup("iOS");
++#else
+     sprops->os_name = strdup("Mac OS X");
++#endif
+ 
+     NSString *nsVerStr = NULL;
+     char* osVersionCStr = NULL;
++#if TARGET_OS_IPHONE
++    NSOperatingSystemVersion osVer = [[NSProcessInfo processInfo] operatingSystemVersion];
++    nsVerStr = [NSString stringWithFormat:@"%ld.%ld.%ld",
++            (long)osVer.majorVersion, (long)osVer.minorVersion,
++            (long)osVer.patchVersion];
++#else
+     // Mac OS 10.9 includes the [NSProcessInfo operatingSystemVersion] function,
+     // but it's not in the 10.9 SDK.  So, call it via NSInvocation.
+     if ([[NSProcessInfo processInfo] respondsToSelector:@selector(operatingSystemVersion)]) {
+@@ -277,6 +297,7 @@ void setOSNameAndVersion(java_props_t *sprops) {
+             nsVerStr = [version objectForKey : @"ProductVersion"];
+         }
+     }
++#endif /* TARGET_OS_IPHONE */
+ 
+     if (nsVerStr != NULL) {
+         // Copy out the char*
+@@ -433,11 +454,20 @@ void setProxyProperties(java_props_t *sProps) {
+     ftpPort = 21,
+     socksPort = 1080;
+ 
++#if TARGET_OS_IPHONE
++    /* Only HTTP proxy dictionary keys are public API on iOS. HTTPS/PAC
++     * resolution is handled by DefaultProxySelector using CFNetwork. */
++#define PROXY_KEY(PROTOCOL, suffix) kCFNetworkProxies##PROTOCOL##suffix
++    CFDictionaryRef dict = CFNetworkCopySystemProxySettings();
++#else
++#define PROXY_KEY(PROTOCOL, suffix) kSCPropNetProxies##PROTOCOL##suffix
+     CFDictionaryRef dict = SCDynamicStoreCopyProxies(NULL);
++#endif
+     if (dict == NULL) return;
+ 
++#if !TARGET_OS_IPHONE
+     /* Read the proxy exceptions list */
+-    CFArrayRef cf_list = CFDictionaryGetValue(dict, kSCPropNetProxiesExceptionsList);
++    CFArrayRef cf_list = CFDictionaryGetValue(dict, PROXY_KEY(Exceptions, List));
+ 
+     CFMutableStringRef cf_exceptionList = NULL;
+     if (cf_list != NULL) {
+@@ -469,12 +499,13 @@ void setProxyProperties(java_props_t *sProps) {
+         }
+         CFRelease(cf_exceptionList);
+     }
++#endif /* !TARGET_OS_IPHONE */
+ 
+ #define CHECK_PROXY(protocol, PROTOCOL)                                     \
+     sProps->protocol##ProxyEnabled =                                        \
+-    getProxyInfoForProtocol(dict, kSCPropNetProxies##PROTOCOL##Enable,      \
+-    kSCPropNetProxies##PROTOCOL##Proxy,         \
+-    kSCPropNetProxies##PROTOCOL##Port,          \
++    getProxyInfoForProtocol(dict, PROXY_KEY(PROTOCOL, Enable),              \
++    PROXY_KEY(PROTOCOL, Proxy),                 \
++    PROXY_KEY(PROTOCOL, Port),                  \
+     &cf_##protocol##Host, &protocol##Port);     \
+     if (sProps->protocol##ProxyEnabled) {                                   \
+         sProps->protocol##Host = createUTF8CString(cf_##protocol##Host);    \
+@@ -484,11 +515,14 @@ void setProxyProperties(java_props_t *sProps) {
+     }
+ 
+     CHECK_PROXY(http, HTTP);
++#if !TARGET_OS_IPHONE
+     CHECK_PROXY(https, HTTPS);
+     CHECK_PROXY(ftp, FTP);
+     CHECK_PROXY(socks, SOCKS);
++#endif /* !TARGET_OS_IPHONE */
+ 
+ #undef CHECK_PROXY
++#undef PROXY_KEY
+ 
+     CFRelease(dict);
+ }
+diff --git a/src/java.base/macosx/native/libjli/java_md_macosx.m b/src/java.base/macosx/native/libjli/java_md_macosx.m
+index 125fe2fd23f02e5282adc515a9b43f9f2985caf9..61b75cea2611675251865c67b7f7fb7dd559a686 100644
+--- a/src/java.base/macosx/native/libjli/java_md_macosx.m
++++ b/src/java.base/macosx/native/libjli/java_md_macosx.m
+@@ -39,10 +39,19 @@
+ 
+ #include "manifest_info.h"
+ 
++#include <TargetConditionals.h>
++
+ /* Support Cocoa event loop on the main thread */
++#if TARGET_OS_IPHONE
++/* iOS has no Cocoa (AppKit); only Foundation and the ObjC runtime are used. */
++#include <Foundation/Foundation.h>
++#include <objc/runtime.h>
++#include <objc/message.h>
++#else
+ #include <Cocoa/Cocoa.h>
+ #include <objc/objc-runtime.h>
+ #include <objc/objc-auto.h>
++#endif
+ 
+ #include <errno.h>
+ #include <spawn.h>
+diff --git a/src/java.base/macosx/native/libnet/DefaultProxySelector.c b/src/java.base/macosx/native/libnet/DefaultProxySelector.c
+index a176699bebbd56a88cc53f1681c9d415c13c9963..2efb18504634b276aa86e0826348a3dce7b8acd9 100644
+--- a/src/java.base/macosx/native/libnet/DefaultProxySelector.c
++++ b/src/java.base/macosx/native/libnet/DefaultProxySelector.c
+@@ -26,7 +26,12 @@
+ 
+ #include <string.h>
+ #include <CoreFoundation/CoreFoundation.h>
++#include <TargetConditionals.h>
++#if TARGET_OS_IPHONE
++#include <CFNetwork/CFNetwork.h>
++#else
+ #include <CoreServices/CoreServices.h>
++#endif
+ 
+ #include "jni.h"
+ #include "jni_util.h"
+diff --git a/src/java.base/macosx/native/libnio/fs/UTIFileTypeDetector.c b/src/java.base/macosx/native/libnio/fs/UTIFileTypeDetector.c
+index 5e9451e850c1ceb80f4199b543636e9c98d4ee84..b94eda37c20c1a054d003ba893160e0ccc5f0124 100644
+--- a/src/java.base/macosx/native/libnio/fs/UTIFileTypeDetector.c
++++ b/src/java.base/macosx/native/libnio/fs/UTIFileTypeDetector.c
+@@ -27,7 +27,12 @@
+ #include "jni_util.h"
+ 
+ #include <CoreFoundation/CoreFoundation.h>
++#include <TargetConditionals.h>
++#if TARGET_OS_IPHONE
++#include <MobileCoreServices/MobileCoreServices.h>
++#else
+ #include <CoreServices/CoreServices.h>
++#endif
+ 
+ /**
+  * Creates a CF string from the given Java string.
+diff --git a/src/java.base/unix/native/libjava/ProcessImpl_md.c b/src/java.base/unix/native/libjava/ProcessImpl_md.c
+index 546107ab2adc750f550356155a795013abb5a051..28c6117eaadad1b5ebadcea031131cdffc97243b 100644
+--- a/src/java.base/unix/native/libjava/ProcessImpl_md.c
++++ b/src/java.base/unix/native/libjava/ProcessImpl_md.c
+@@ -48,6 +48,10 @@
+ 
+ #include "childproc.h"
+ 
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
++
+ /*
+  *
+  * When starting a child on Unix, we need to do three things:
+@@ -479,6 +483,7 @@ static int copystrings(char *buf, int offset, const char * const *arg) {
+     return offset+count;
+ }
+ 
++#if !defined(__APPLE__) || !TARGET_OS_IPHONE
+ /**
+  * We are unusually paranoid; use of vfork is
+  * especially likely to tickle gcc/glibc bugs.
+@@ -645,6 +650,7 @@ spawnChild(JNIEnv *env, jobject process, ChildStuff *c, const char *helperpath)
+      * via the statement below */
+     return resultPid;
+ }
++#endif /* !TARGET_OS_IPHONE */
+ 
+ /*
+  * Start a child process running function childProcess.
+@@ -652,6 +658,11 @@ spawnChild(JNIEnv *env, jobject process, ChildStuff *c, const char *helperpath)
+  */
+ static pid_t
+ startChild(JNIEnv *env, jobject process, ChildStuff *c, const char *helperpath) {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++    /* iOS applications cannot create child processes. */
++    errno = ENOTSUP;
++    return -1;
++#else
+     switch (c->mode) {
+ /* vfork(2) is deprecated on Darwin*/
+       #ifndef __APPLE__
+@@ -665,6 +676,7 @@ startChild(JNIEnv *env, jobject process, ChildStuff *c, const char *helperpath)
+       default:
+         return -1;
+     }
++#endif
+ }
+ 
+ JNIEXPORT jint JNICALL
+@@ -679,6 +691,10 @@ Java_java_lang_ProcessImpl_forkAndExec(JNIEnv *env,
+                                        jintArray std_fds,
+                                        jboolean redirectErrorStream)
+ {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++    JNU_ThrowIOException(env, "Process creation is not supported on iOS");
++    return -1;
++#endif
+     int errnum;
+     int resultPid = -1;
+     int in[2], out[2], err[2], fail[2], childenv[2];
+diff --git a/src/java.base/unix/native/libjava/childproc.c b/src/java.base/unix/native/libjava/childproc.c
+index c5dc6d31029c85b3003125a2edf1c40c8fd29ffd..b07fe9e83a9bb6593beb89872b53f6016420bf78 100644
+--- a/src/java.base/unix/native/libjava/childproc.c
++++ b/src/java.base/unix/native/libjava/childproc.c
+@@ -34,6 +34,10 @@
+ 
+ #include "childproc.h"
+ 
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
++
+ const char * const *parentPathv;
+ 
+ int
+@@ -208,6 +212,7 @@ initVectorFromBlock(const char**vector, const char* block, int count)
+     vector[count] = NULL;
+ }
+ 
++#if !defined(__APPLE__) || !TARGET_OS_IPHONE
+ /**
+  * Exec FILE as a traditional Bourne shell script (i.e. one without #!).
+  * If we could do it over again, we would probably not support such an ancient
+@@ -336,6 +341,14 @@ JDK_execvpe(int mode, const char *file,
+             errno = sticky_errno;
+     }
+ }
++#else
++void
++JDK_execvpe(int mode, const char *file,
++            const char *argv[], const char *const envp[])
++{
++    errno = ENOTSUP;
++}
++#endif /* !TARGET_OS_IPHONE */
+ 
+ /**
+  * Child process after a successful fork().
+diff --git a/src/java.base/unix/native/libnet/NetworkInterface.c b/src/java.base/unix/native/libnet/NetworkInterface.c
+index 152fed27a1396058e11bea733b5e010cc3faa00b..cbbb6dcc9c302e673b58df88dea1f8794da0376e 100644
+--- a/src/java.base/unix/native/libnet/NetworkInterface.c
++++ b/src/java.base/unix/native/libnet/NetworkInterface.c
+@@ -25,7 +25,12 @@
+ #include <arpa/inet.h>
+ #include <errno.h>
+ #include <net/if.h>
++#ifdef MACOSX
++#include <TargetConditionals.h>
++#endif
++#if !defined(MACOSX) || !TARGET_OS_IPHONE
+ #include <net/if_arp.h>
++#endif
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/ioctl.h>
+diff --git a/src/java.security.jgss/share/classes/sun/security/krb5/Config.java b/src/java.security.jgss/share/classes/sun/security/krb5/Config.java
+index b5601b9bef1c9dda50ee5ad474e9734ec30b74a2..eb142502ac642835248bcb56e33e9bb9a147e2b8 100644
+--- a/src/java.security.jgss/share/classes/sun/security/krb5/Config.java
++++ b/src/java.security.jgss/share/classes/sun/security/krb5/Config.java
+@@ -160,7 +160,8 @@ public class Config {
+ 
+     private static boolean isMacosLionOrBetter() {
+         // split the "10.x.y" version number
+-        if (!OperatingSystem.isMacOS()) {
++        if (!OperatingSystem.isMacOS() ||
++                "iOS".equals(GetPropertyAction.privilegedGetProperty("os.name"))) {
+             return false;
+         }
+ 
+diff --git a/src/java.security.jgss/share/classes/sun/security/krb5/Credentials.java b/src/java.security.jgss/share/classes/sun/security/krb5/Credentials.java
+index da6b5e3d674723797846b33eb6c91fa0f672b66f..17dce2c14c74d0d869cfe651b0ec7448b6d00db4 100644
+--- a/src/java.security.jgss/share/classes/sun/security/krb5/Credentials.java
++++ b/src/java.security.jgss/share/classes/sun/security/krb5/Credentials.java
+@@ -32,6 +32,7 @@
+ package sun.security.krb5;
+ 
+ import jdk.internal.util.OperatingSystem;
++import sun.security.action.GetPropertyAction;
+ import sun.security.krb5.internal.*;
+ import sun.security.krb5.internal.ccache.CredentialsCache;
+ import sun.security.krb5.internal.crypto.EType;
+@@ -63,7 +64,9 @@ public class Credentials {
+     AuthorizationData authzData;
+     private static boolean DEBUG = Krb5.DEBUG;
+     static boolean alreadyLoaded = false;
+-    private static boolean alreadyTried = false;
++    // iOS does not provide the macOS native credentials cache library.
++    private static boolean alreadyTried =
++            "iOS".equals(GetPropertyAction.privilegedGetProperty("os.name"));
+ 
+     public static final boolean S4U2PROXY_ACCEPT_NON_FORWARDABLE
+             = "true".equalsIgnoreCase(SecurityProperties.privilegedGetOverridable(
+diff --git a/src/jdk.jdwp.agent/unix/native/libjdwp/exec_md.c b/src/jdk.jdwp.agent/unix/native/libjdwp/exec_md.c
+index b43d4de80fce2bcfd04091c8b91588845d007395..c7b1590b6d543c55b7eafba3da691427f2c9e14c 100644
+--- a/src/jdk.jdwp.agent/unix/native/libjdwp/exec_md.c
++++ b/src/jdk.jdwp.agent/unix/native/libjdwp/exec_md.c
+@@ -34,6 +34,20 @@
+ #include "util.h"
+ #include "error_messages.h"
+ 
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
++
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++int
++dbgsysExec(char *cmdLine)
++{
++    /* The JDWP launch= option cannot spawn a debugger inside an iOS app. */
++    errno = ENOTSUP;
++    return SYS_ERR;
++}
++#else
++
+ static char *skipWhitespace(char *p) {
+     while ((*p != '\0') && isspace(*p)) {
+         p++;
+@@ -210,3 +224,4 @@ dbgsysExec(char *cmdLine)
+         return SYS_OK;
+     }
+ }
++#endif /* TARGET_OS_IPHONE */

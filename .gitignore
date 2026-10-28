@@ -1,0 +1,10 @@
+/upstream/
+/work/
+/out/
+/Artifacts/
+/Samples/HelloJava/*.xcodeproj/
+/Samples/HelloJava/build/
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
