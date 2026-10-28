@@ -28,7 +28,7 @@ jdk.naming.dns,jdk.naming.rmi,jdk.net,jdk.nio.mapmode,jdk.security.auth,\
 jdk.security.jgss,jdk.unsupported,jdk.xml.dom,jdk.zipfs,openj9.jvm,openj9.sharedclasses"
 
 # Libraries that are never packaged (stems, i.e. lib<stem>.dylib).
-DROPPED_LIBS="jsig j9shr29"
+DROPPED_LIBS="jli jsig j9shr29"
 # Image subtrees that are dropped entirely (relative to the image root).
 DROPPED_DIRS="bin lib/server lib/j9vm"
 

@@ -7,11 +7,12 @@ This package embeds an interpreter-only OpenJ9 runtime in an iOS application. It
 Build both runtime slices using the repository build instructions, then package their jmods with the **matching host macOS Semeru JDK 21**. `jlink` itself must be a host executable, not an iOS binary:
 
 ```sh
+export SEMERU_JDK="$PWD/work/semeru/home"
 bash scripts/package-runtime.sh --sdk iphoneos \
-  --jmods upstream/openjdk/build/ios-iphoneos/images/jmods \
+  --jmods work/src/jdk/build/ios-iphoneos/images/jmods \
   --jlink "$SEMERU_JDK/bin/jlink" --out Artifacts/Runtime --min-ios 15.0 --version 21.0.13
 bash scripts/package-runtime.sh --sdk iphonesimulator \
-  --jmods upstream/openjdk/build/ios-iphonesimulator/images/jmods \
+  --jmods work/src/jdk/build/ios-iphonesimulator/images/jmods \
   --jlink "$SEMERU_JDK/bin/jlink" --out Artifacts/Runtime --min-ios 15.0 --version 21.0.13
 bash scripts/make-xcframeworks.sh \
   --device Artifacts/Runtime/iphoneos/Frameworks \
@@ -19,7 +20,7 @@ bash scripts/make-xcframeworks.sh \
 bash scripts/generate-package.sh --frameworks-dir Artifacts/XCFrameworks
 ```
 
-`--modules m1,m2,...` overrides the default jlink module set; missing modules are warned about and skipped. `java.base` and the real OpenJ9 `jvm` library must exist. The packager removes launcher executables, redirector JVMs, `jsig` and shared-class-cache support, and rejects unresolved load commands, wrong Mach-O platforms/architectures, or native code inside `javahome`. It rewrites libraries into sibling frameworks; `jvm.framework/javahome` contains the linked Java classes, configuration and data. Do not move that directory independently of its framework.
+`--modules m1,m2,...` overrides the default jlink module set; missing modules are warned about and skipped. `java.base` and the real OpenJ9 `jvm` library must exist. The packager removes launcher executables and `libjli` (whose macOS JNI wrappers collide with the VM's invocation symbols), redirector JVMs, `jsig` and shared-class-cache support, and rejects unresolved load commands, wrong Mach-O platforms/architectures, or native code inside `javahome`. It rewrites libraries into sibling frameworks; `jvm.framework/javahome` contains the linked Java classes, configuration and data. Do not move that directory independently of its framework.
 
 `Package.swift` is generated, including its initial expected framework list. CI regenerates it from actual build outputs: do not manually retain targets that the build does not emit. In Xcode, choose **File > Add Package Dependencies > Add Local**, select the repository, and add the **OpenJ9** product to the app target. Swift imports `OpenJ9Kit`; Objective-C imports `<OpenJ9Kit/OpenJ9Kit.h>`. SwiftPM carries all binary-framework dependencies. Inspect the resulting app to ensure **every** runtime framework is embedded and signed by Xcode, not merely linked. The packaging scripts neither strip nor sign the binaries. Use your normal device development/distribution signing configuration.
 
