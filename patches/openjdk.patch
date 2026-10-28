@@ -1034,7 +1034,7 @@ index be1ac3f1fb8a203a8134531ba9539d2060b58d9f..384373ecded68293b1f8b548b78672d4
  endif
 +endif # macOS window-system libraries are not available on iOS
 diff --git a/make/modules/java.desktop/lib/Awt2dLibraries.gmk b/make/modules/java.desktop/lib/Awt2dLibraries.gmk
-index 3415754836d17cf587597cbd22c489ef170d40f1..6e738ea8223ea03bac168904c36d0097ee7fd03b 100644
+index 3415754836d17cf587597cbd22c489ef170d40f1..5a821838ab995c8de1ef1c76ec4b4347e0ce3e3b 100644
 --- a/make/modules/java.desktop/lib/Awt2dLibraries.gmk
 +++ b/make/modules/java.desktop/lib/Awt2dLibraries.gmk
 @@ -25,6 +25,10 @@
@@ -1104,8 +1104,8 @@ index 3415754836d17cf587597cbd22c489ef170d40f1..6e738ea8223ea03bac168904c36d0097
  
    LIBAWT_HEADLESS_EXCLUDES := medialib
 +  ifeq ($(IOS_HEADLESS), true)
-+    # No font discovery, CUPS or OpenGL implementation belongs in this library.
-+    LIBAWT_HEADLESS_EXCLUDES += opengl
++    # No font discovery, CUPS, X11 or OpenGL implementation belongs in this library.
++    LIBAWT_HEADLESS_EXCLUDES += opengl x11
 +    LIBAWT_HEADLESS_EXCLUDE_FILES := fontpath.c awt_Font.c X11Color.c CUPSfuncs.c
 +  endif
  
@@ -1259,6 +1259,20 @@ index e005e703f2c5ef411aeb2f2eaa217fca82ecba11..79cf112749fc79c85ab19bcb91796bc6
  
  # Get the complete module source path:
  CT_MODULESOURCEPATH := $(call GetModuleSrcPath)
+diff --git a/make/modules/jdk.javadoc/Gendata.gmk b/make/modules/jdk.javadoc/Gendata.gmk
+index 412559c5fe175b2fe6a48676414f1541be37442c..c687dd444b648d8fc0ea9b16fd1bda6ffc1c3ae3 100644
+--- a/make/modules/jdk.javadoc/Gendata.gmk
++++ b/make/modules/jdk.javadoc/Gendata.gmk
+@@ -35,6 +35,9 @@ $(eval $(call IncludeCustomExtension, modules/jdk.javadoc/Gendata.gmk))
+ $(eval $(call ReadImportMetaData))
+ 
+ JAVADOC_MODULES := $(DOCS_MODULES)
++ifeq ($(OPENJDK_TARGET_OS_ENV), macosx.ios)
++  JAVADOC_MODULES := $(filter-out $(MODULES_FILTER), $(JAVADOC_MODULES))
++endif
+ 
+ # Get the complete module source path:
+ JAVADOC_MODULESOURCEPATH := $(call GetModuleSrcPath)
 diff --git a/src/java.base/macosx/native/libjava/java_props_macosx.c b/src/java.base/macosx/native/libjava/java_props_macosx.c
 index f50daac13cb6ae08e69737482ac4aff8d8ffec41..edfa39a704237177ad9a0deff4f3f5209a32b2a1 100644
 --- a/src/java.base/macosx/native/libjava/java_props_macosx.c
