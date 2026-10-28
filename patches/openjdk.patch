@@ -1245,6 +1245,20 @@ index fcd46b4404434f16b9a2a60c7b428cd6050156dc..fcb6f620d708c6f9b5c9e2da0d5e44fc
      # libosxkrb5 needs to call deprecated krb5 APIs so that java
      # can use the native credentials cache.
      $(eval $(call SetupJdkLibrary, BUILD_LIBOSXKRB5, \
+diff --git a/make/modules/jdk.compiler/Gendata.gmk b/make/modules/jdk.compiler/Gendata.gmk
+index e005e703f2c5ef411aeb2f2eaa217fca82ecba11..79cf112749fc79c85ab19bcb91796bc6116d0a16 100644
+--- a/make/modules/jdk.compiler/Gendata.gmk
++++ b/make/modules/jdk.compiler/Gendata.gmk
+@@ -37,6 +37,9 @@ $(eval $(call ReadImportMetaData))
+ 
+ # Modules that should be visible for 9 - the documented modules:
+ CT_MODULES := $(DOCS_MODULES)
++ifeq ($(OPENJDK_TARGET_OS_ENV), macosx.ios)
++  CT_MODULES := $(filter-out $(MODULES_FILTER), $(CT_MODULES))
++endif
+ 
+ # Get the complete module source path:
+ CT_MODULESOURCEPATH := $(call GetModuleSrcPath)
 diff --git a/src/java.base/macosx/native/libjava/java_props_macosx.c b/src/java.base/macosx/native/libjava/java_props_macosx.c
 index f50daac13cb6ae08e69737482ac4aff8d8ffec41..edfa39a704237177ad9a0deff4f3f5209a32b2a1 100644
 --- a/src/java.base/macosx/native/libjava/java_props_macosx.c
