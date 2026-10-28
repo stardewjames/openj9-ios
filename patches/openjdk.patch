@@ -1383,7 +1383,7 @@ index f50daac13cb6ae08e69737482ac4aff8d8ffec41..edfa39a704237177ad9a0deff4f3f520
      CFRelease(dict);
  }
 diff --git a/src/java.base/macosx/native/libjli/java_md_macosx.m b/src/java.base/macosx/native/libjli/java_md_macosx.m
-index 125fe2fd23f02e5282adc515a9b43f9f2985caf9..61b75cea2611675251865c67b7f7fb7dd559a686 100644
+index 125fe2fd23f02e5282adc515a9b43f9f2985caf9..303e85126e5b4000b17fe39dae331fddb955b6d2 100644
 --- a/src/java.base/macosx/native/libjli/java_md_macosx.m
 +++ b/src/java.base/macosx/native/libjli/java_md_macosx.m
 @@ -39,10 +39,19 @@
@@ -1406,6 +1406,23 @@ index 125fe2fd23f02e5282adc515a9b43f9f2985caf9..61b75cea2611675251865c67b7f7fb7d
  
  #include <errno.h>
  #include <spawn.h>
+@@ -182,6 +191,8 @@ GetExecName() {
+     return execname;
+ }
+ 
++#if !TARGET_OS_IPHONE
++/* Embedded iOS clients link the real VM; libjli must not shadow its JNI symbols. */
+ /*
+  * Exports the JNI interface from libjli
+  *
+@@ -272,6 +283,7 @@ JLI_SetPreferredJVM(const char *prefJVM) {
+     if (prefJVM == NULL) return;
+     sPreferredJVMType = strdup(prefJVM);
+ }
++#endif /* !TARGET_OS_IPHONE */
+ 
+ static BOOL awtLoaded = NO;
+ static pthread_mutex_t awtLoaded_mutex = PTHREAD_MUTEX_INITIALIZER;
 diff --git a/src/java.base/macosx/native/libnet/DefaultProxySelector.c b/src/java.base/macosx/native/libnet/DefaultProxySelector.c
 index a176699bebbd56a88cc53f1681c9d415c13c9963..2efb18504634b276aa86e0826348a3dce7b8acd9 100644
 --- a/src/java.base/macosx/native/libnet/DefaultProxySelector.c
