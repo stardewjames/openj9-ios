@@ -44,7 +44,7 @@ NS_SWIFT_NAME(OpenJ9VM)
     NS_SWIFT_NAME(runMain(className:arguments:completionQueue:completion:));
 // JNIEnv is valid ONLY on the calling thread. Existing attachments are borrowed;
 // only attachments made by this kit are detached here or by its pthread TLS destructor.
-- (nullable JNIEnv *)attachCurrentThread;
+- (JNIEnv * _Nullable)attachCurrentThread;
 - (void)detachCurrentThread;
 // Synchronous, reentrant on the Java thread, with a scoped JNI local frame.
 // Do not retain env/local refs, throw ObjC exceptions, or leave a pending Java exception.
