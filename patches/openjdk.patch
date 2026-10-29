@@ -451,6 +451,29 @@ index 45104bb499f0318f30038af3dfaac36d44c46bf3..54d3239f51120b4349763d5f42ccb2be
  ### Cross compiling the easy way with OpenJDK devkits
  
  The OpenJDK build system provides out-of-the box support for creating and using
+diff --git a/make/CompileDemos.gmk b/make/CompileDemos.gmk
+index c85bc102acbe70c0a5d6bc09b2b29616fb9fdcd9..5f8f5a355baa6bd85f6a65450ec6a8a578c11ce6 100644
+--- a/make/CompileDemos.gmk
++++ b/make/CompileDemos.gmk
+@@ -153,6 +153,9 @@ define SetupBuildDemoBody
+   TARGETS += $$($1)
+ endef
+ 
++# These JFC demos require java.desktop even when demos are not installed.
++ifneq ($(ENABLE_JAVA_DESKTOP), false)
++
+ CODEPOINT_SERVICE := java.awt.im.spi.InputMethodDescriptor
+ CODEPOINT_METAINF_SERVICE_FILE := \
+     $(SUPPORT_OUTPUTDIR)/demos/classes/jfc/CodePointIM/META-INF/services/$(CODEPOINT_SERVICE)
+@@ -225,6 +228,8 @@ $(eval $(call SetupBuildDemo, TransparentRuler, \
+     MAIN_CLASS := transparentruler.Ruler, \
+ ))
+ 
++endif # ENABLE_JAVA_DESKTOP
++
+ ################################################################################
+ # Copy html and README files.
+ 
 diff --git a/make/autoconf/boot-jdk.m4 b/make/autoconf/boot-jdk.m4
 index 9ecb53d64afaa7d23fcf7080c55d6e19d03f961b..74fbd9ac10786c658192b8ba1b6a74d6790922f0 100644
 --- a/make/autoconf/boot-jdk.m4

@@ -107,8 +107,6 @@ jobs:
       fail-fast: false
       matrix:
         desktop: [headless, core]
-    permissions:
-      contents: write
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -151,7 +149,12 @@ jobs:
         run: |
           scripts/make-xcframeworks.sh --device out/runtime/iphoneos/Frameworks \
             --simulator out/runtime/iphonesimulator/Frameworks --out Artifacts/XCFrameworks
-          scripts/generate-package.sh --frameworks-dir Artifacts/XCFrameworks
+
+      - name: Package standalone SwiftPM SDK
+        run: |
+          scripts/package-sdk.sh Artifacts/XCFrameworks "Artifacts/OpenJ9-iOS-${{ matrix.desktop }}.zip"
+          mkdir -p work/sdk-smoke
+          ditto -x -k "Artifacts/OpenJ9-iOS-${{ matrix.desktop }}.zip" work/sdk-smoke
 
       - name: Simulator smoke test
         env:
@@ -159,17 +162,16 @@ jobs:
         run: |
           args=()
           [[ "${{ matrix.desktop }}" != core ]] || args+=(--disable-java-desktop)
-          scripts/smoke-test-simulator.sh --out work/smoke "${args[@]}"
+          work/sdk-smoke/OpenJ9/scripts/smoke-test-simulator.sh --out "$PWD/work/smoke" "${args[@]}"
 
-      - name: Upload XCFrameworks
+      - name: Upload SwiftPM SDK
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: OpenJ9-iOS-${{ matrix.desktop }}-xcframeworks
           path: |
-            Artifacts/XCFrameworks/*.zip
-            Artifacts/XCFrameworks/checksums.txt
-            Package.swift
+            Artifacts/OpenJ9-iOS-${{ matrix.desktop }}.zip
+            Artifacts/OpenJ9-iOS-${{ matrix.desktop }}.zip.sha256
           if-no-files-found: warn
 
       - name: Upload smoke logs
@@ -180,13 +182,21 @@ jobs:
           path: work/smoke
           if-no-files-found: ignore
 
-      - name: Publish release
-        if: github.ref_type == 'tag' && matrix.desktop == 'headless'
+  release:
+    needs: package
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: OpenJ9-iOS-*-xcframeworks
+          path: work/release
+      - name: Publish verified SDKs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
-          scripts/generate-package.sh --frameworks-dir Artifacts/XCFrameworks \
-            --remote-base-url "$base" --checksums Artifacts/XCFrameworks/checksums.txt
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "OpenJ9 JDK 21 runtime for iOS" \
-            Artifacts/XCFrameworks/*.zip Artifacts/XCFrameworks/checksums.txt Package.swift
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes "OpenJ9 Java 21 for iOS. Download either SwiftPM SDK, unzip, and add OpenJ9 as a local Xcode package. Interpreter-only; physical-device execution and App Store approval are not certified." \
+            work/release/*/*.zip work/release/*/*.sha256

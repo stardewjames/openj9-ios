@@ -4,6 +4,10 @@ This package embeds an interpreter-only OpenJ9 runtime in an iOS application. It
 
 ## Prepare the Swift package
 
+For prebuilt SDKs, download either variant's zip and checksum from [Releases](https://github.com/stardewjames/openj9-ios/releases), verify the checksum, and extract it. Add the extracted `OpenJ9` directory as a **local** Xcode package and select the **OpenJ9** product. Its `Package.swift`, API sources and XCFrameworks are already present; skip the build commands below. Do not use the repository Git URL as a remote SwiftPM binary package.
+
+For a source build:
+
 Build both runtime slices using the repository build instructions, then package their jmods with the **matching host macOS Semeru JDK 21**. `jlink` itself must be a host executable, not an iOS binary:
 
 ```sh
