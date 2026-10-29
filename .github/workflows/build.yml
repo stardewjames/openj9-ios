@@ -24,6 +24,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  swift-api:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile documented Swift embedding API
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess
+          example = pathlib.Path("docs/EMBEDDING.md").read_text().split("```swift\n", 1)[1].split("```", 1)[0]
+          source = pathlib.Path("swift-embedding-smoke.swift")
+          source.write_text(example)
+          try:
+              sdk = subprocess.check_output(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"], text=True).strip()
+              subprocess.run(["xcrun", "swiftc", "-typecheck", "-target", "arm64-apple-ios15.0-simulator",
+                              "-sdk", sdk, "-I", "Sources/OpenJ9Kit/include", str(source)], check=True)
+          finally:
+              source.unlink()
+          PY
+
   jdk:
     name: jdk (${{ matrix.sdk }}, ${{ matrix.desktop }})
     runs-on: macos-15
@@ -187,7 +206,7 @@ jobs:
           if-no-files-found: ignore
 
   release:
-    needs: package
+    needs: [package, swift-api]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:

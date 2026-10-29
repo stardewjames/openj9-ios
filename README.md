@@ -2,7 +2,7 @@
 
 OpenJ9 Java 21 interpreter port for embedding in an iOS application. Targets arm64 iOS devices and arm64 iOS Simulator, minimum iOS 15.0. Sources are pinned to IBM Semeru 21.0.13.0 / Eclipse OpenJ9 0.63.0 in `sources.env`.
 
-**Validation status:** the iOS port is under build validation. No device runtime or App Store approval is claimed. Use the build workflow's logs and Simulator smoke result—not the presence of an XCFramework—as evidence that a revision works.
+**Validation status:** arm64 device and Simulator builds, plus the headless Java/JNI/Java2D smoke from a freshly extracted SDK, pass in [this verified run](https://github.com/stardewjames/openj9-ios/actions/runs/40793067020). Core-only builds are reserved for release validation or explicit opt-in. Physical-device execution and App Store approval are not certified.
 
 ## Embed a prebuilt runtime
 
