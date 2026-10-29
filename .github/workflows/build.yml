@@ -258,7 +258,10 @@ jobs:
         run: |
           curl -fsSL --retry 3 -o work-jdk21u.tar.gz \
             "https://github.com/openjdk/jdk21u/archive/refs/tags/jdk-21.0.13+9.tar.gz"
-          tar -xzf work-jdk21u.tar.gz
+          mkdir -p jdk-src && tar -xzf work-jdk21u.tar.gz -C jdk-src
+          src="$(find jdk-src -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          [[ -n "$src" && -f "$src/configure" ]] || { echo "no JDK source tree" >&2; exit 1; }
+          echo "JDK_SRC=$PWD/$src" >> "$GITHUB_ENV"
 
       - name: Download boot JDK
         run: |
@@ -272,7 +275,7 @@ jobs:
 
       - name: Build HotSpot Zero (macOS arm64)
         run: |
-          cd jdk21u-jdk-21.0.13+9
+          cd "$JDK_SRC"
           bash configure --with-jvm-variants=zero --with-boot-jdk="$BOOT_JDK" \
             --with-debug-level=release --with-native-debug-symbols=none \
             --disable-warnings-as-errors --with-jobs="$(sysctl -n hw.ncpu)"
@@ -282,7 +285,7 @@ jobs:
         run: |
           mkdir -p work/zero-classes
           "$BOOT_JDK/bin/javac" --release 21 -d work/zero-classes Samples/HelloJava/java/src/Bench.java
-          ZERO_BIN="$(find "$PWD/jdk21u-jdk-21.0.13+9/build" -maxdepth 4 -type f -path '*/images/jdk/bin/java' -print -quit)"
+          ZERO_BIN="$(find "$JDK_SRC/build" -maxdepth 5 -type f -path '*/images/jdk/bin/java' -print -quit)"
           [[ -n "$ZERO_BIN" ]] || { echo "no built java" >&2; exit 1; }
           "$ZERO_BIN" -version
           "$ZERO_BIN" -Xint -XX:-UseCompressedOops -XX:-UseCompressedClassPointers \
