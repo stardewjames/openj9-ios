@@ -15,6 +15,10 @@ on:
         description: Also validate the core-only variant (release validation)
         type: boolean
         default: false
+      zero_baseline:
+        description: Build HotSpot Zero for macOS arm64 and run the benchmark baseline
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -204,6 +208,13 @@ jobs:
           [[ "${{ matrix.desktop }}" != core ]] || args+=(--disable-java-desktop)
           work/sdk-smoke/OpenJ9/scripts/smoke-test-simulator.sh --out "$PWD/work/smoke" "${args[@]}"
 
+      - name: Simulator benchmark
+        if: matrix.desktop == 'headless'
+        env:
+          HOST_JAVA_HOME: ${{ env.SEMERU_HOME }}
+        run: |
+          work/sdk-smoke/OpenJ9/scripts/smoke-test-simulator.sh --bench --out "$PWD/work/bench"
+
       - name: Upload SwiftPM SDK
         if: always()
         uses: actions/upload-artifact@v4
@@ -219,7 +230,61 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: smoke-logs-${{ matrix.desktop }}
-          path: work/smoke
+          path: |
+            work/smoke
+            work/bench
+          if-no-files-found: ignore
+
+  zero-baseline:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.zero_baseline }}
+    runs-on: macos-15
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: brew install autoconf make
+
+      - name: Fetch Zero-capable JDK sources
+        run: |
+          curl -fsSL --retry 3 -o work-jdk21u.tar.gz \
+            "https://github.com/openjdk/jdk21u/archive/refs/tags/jdk-21.0.13+9.tar.gz"
+          tar -xzf work-jdk21u.tar.gz
+
+      - name: Download boot JDK
+        run: |
+          source sources.env
+          mkdir -p work/semeru/extract
+          curl -fsSL --retry 3 -o work/semeru/semeru.tar.gz "$SEMERU_JDK_URL"
+          tar -xzf work/semeru/semeru.tar.gz -C work/semeru/extract
+          java="$(find work/semeru/extract -maxdepth 6 -type f -path '*/bin/java' -print -quit)"
+          [[ -n "$java" ]] || { echo "Semeru archive has no JDK" >&2; exit 1; }
+          echo "BOOT_JDK=$(cd "$(dirname "$java")/.." && pwd)" >> "$GITHUB_ENV"
+
+      - name: Build HotSpot Zero (macOS arm64)
+        run: |
+          cd jdk21u-jdk-21.0.13+9
+          bash configure --with-jvm-variants=zero --with-boot-jdk="$BOOT_JDK" \
+            --with-debug-level=release --with-native-debug-symbols=none \
+            --disable-warnings-as-errors --with-jobs="$(sysctl -n hw.ncpu)"
+          make jdk-image LOG=warn
+
+      - name: Run benchmark baseline
+        run: |
+          mkdir -p work/zero-classes
+          "$BOOT_JDK/bin/javac" --release 21 -d work/zero-classes Samples/HelloJava/java/src/Bench.java
+          ZERO_BIN="$(find "$PWD/jdk21u-jdk-21.0.13+9/build" -maxdepth 4 -type f -path '*/images/jdk/bin/java' -print -quit)"
+          [[ -n "$ZERO_BIN" ]] || { echo "no built java" >&2; exit 1; }
+          "$ZERO_BIN" -version
+          "$ZERO_BIN" -Xint -XX:-UseCompressedOops -XX:-UseCompressedClassPointers \
+            -cp work/zero-classes Bench | tee work/zero-bench.txt
+
+      - name: Upload baseline
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zero-baseline
+          path: work/zero-bench.txt
           if-no-files-found: ignore
 
   release:

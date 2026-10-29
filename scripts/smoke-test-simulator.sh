@@ -5,9 +5,10 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT="$ROOT/build/smoke-simulator"
 TIMEOUT=600
+BENCH=0
 export OPENJ9_SMOKE_DESKTOP=headless
 usage() {
-    echo "Usage: $(basename "$0") [--disable-java-desktop] [--out <log-and-build-dir>] [--timeout <seconds>]"
+    echo "Usage: $(basename "$0") [--disable-java-desktop] [--bench] [--out <log-and-build-dir>] [--timeout <seconds>]"
     echo "Requires Xcode, XcodeGen, python3 and a host JDK 21 (HOST_JAVA_HOME or JAVA_HOME)."
     echo "First populate Artifacts/XCFrameworks and regenerate the local Package.swift."
 }
@@ -16,6 +17,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
         --disable-java-desktop) export OPENJ9_SMOKE_DESKTOP=none; shift ;;
+        --bench) BENCH=1; shift ;;
         --out|--timeout)
             [[ $# -ge 2 && -n "$2" ]] || die "$1 requires a value"
             if [[ "$1" == --out ]]; then OUT=$2; else TIMEOUT=$2; fi
@@ -106,7 +108,7 @@ fi
 xcrun simctl install "$UDID" "$APP"
 
 # Python supplies a real deadline on stock macOS (which has no GNU timeout).
-SIMCTL_CHILD_OPENJ9_SMOKE_EXIT=1 SIMCTL_CHILD_OPENJ9_SMOKE_DESKTOP="$OPENJ9_SMOKE_DESKTOP" python3 - "$TIMEOUT" "$UDID" "$BUNDLE_ID" <<'PY' 2>&1 | tee "$LOG"
+SIMCTL_CHILD_OPENJ9_SMOKE_EXIT=1 SIMCTL_CHILD_OPENJ9_SMOKE_DESKTOP="$OPENJ9_SMOKE_DESKTOP" SIMCTL_CHILD_OPENJ9_SMOKE_BENCH="${BENCH:-0}" python3 - "$TIMEOUT" "$UDID" "$BUNDLE_ID" <<'PY' 2>&1 | tee "$LOG"
 import os, signal, subprocess, sys
 process = subprocess.Popen(['xcrun', 'simctl', 'launch', '--console-pty', '--terminate-running-process', sys.argv[2], sys.argv[3]], start_new_session=True)
 try:
@@ -121,10 +123,16 @@ except subprocess.TimeoutExpired:
     print('OPENJ9_IOS_SMOKE_FAIL: simulator launch timed out', flush=True)
     sys.exit(124)
 PY
-grep -q '^OPENJ9_IOS_SMOKE_OK' "$LOG" || die "success marker missing (see $LOG)"
-if [[ "$OPENJ9_SMOKE_DESKTOP" == none ]]; then
+if [[ "$BENCH" == 1 ]]; then
+    grep -q '^BENCH_HOST ' "$LOG" || die "benchmark host marker missing (see $LOG)"
+    grep -q '^OPENJ9_IOS_BENCH_OK' "$LOG" || die "benchmark completion marker missing (see $LOG)"
+    echo "=== benchmark results ==="
+    grep -E '^(BENCH_HOST|BENCH) ' "$LOG"
+elif [[ "$OPENJ9_SMOKE_DESKTOP" == none ]]; then
     grep -q '^OPENJ9_IOS_CORE_ONLY_OK' "$LOG" || die "core-only marker missing"
+    grep -q '^OPENJ9_IOS_SMOKE_OK' "$LOG" || die "success marker missing (see $LOG)"
 else
+    grep -q '^OPENJ9_IOS_SMOKE_OK' "$LOG" || die "success marker missing (see $LOG)"
     grep -q '^OPENJ9_IOS_HEADLESS_OK' "$LOG" || die "headless rendering marker missing"
 fi
 if grep -q 'OPENJ9_IOS_SMOKE_FAIL:' "$LOG"; then die "failure marker found (see $LOG)"; fi
