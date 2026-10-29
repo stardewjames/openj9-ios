@@ -333,7 +333,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: third_party/moeReader/SuwayomiHost/runtime
-          key: zero-sim-runtime-${{ env.MOERADER_COMMIT }}-${{ hashFiles('scripts/bench-zero-sim.sh', 'Samples/HelloZero/**') }}
+          key: zero-sim-runtime-${{ env.MOERADER_COMMIT }}
 
       - uses: actions/setup-java@v4
         if: steps.runtime.outputs.cache-hit != 'true'

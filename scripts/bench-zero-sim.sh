@@ -106,9 +106,11 @@ APP="$OUT/DerivedData/Build/Products/Debug-iphonesimulator/HelloZero.app"
 [[ -f "$APP/lib/lib/modules" ]] || die "the app bundle has no lib/lib/modules"
 [[ -f "$APP/Bench.jar" ]] || die "the app bundle has no Bench.jar"
 
-SELECTION=$(xcrun simctl list --json | python3 - <<'PY'
+xcrun simctl list --json >"$OUT/simulators.json"
+SELECTION=$(python3 - "$OUT/simulators.json" <<'PY'
 import json, sys
-data = json.load(sys.stdin)
+with open(sys.argv[1]) as stream:
+    data = json.load(stream)
 runtimes = [r for r in data['runtimes']
             if r.get('isAvailable') and r['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')]
 if not runtimes:
