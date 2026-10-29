@@ -335,7 +335,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: third_party/moeReader/SuwayomiHost/runtime
-          key: zero-sim-runtime-${{ env.MOERADER_COMMIT }}-v2
+          key: zero-sim-runtime-${{ env.MOERADER_COMMIT }}-v3
 
       - uses: actions/setup-java@v4
         if: steps.runtime.outputs.cache-hit != 'true'
@@ -379,6 +379,47 @@ jobs:
               + anchor + "\n"
               "#endif"
           )
+          path.write_text(text.replace(anchor, replacement, 1))
+          print("patched", path)
+          PY
+
+      # bsd_zero ships ShouldNotCallThis() stubs for the signal-context accessors,
+      # so any handled signal aborts the VM instead of resuming from the faulting
+      # PC. arm64 in the Apple signal context is at __ss.__pc.
+      - name: Add arm64 signal-context accessors to Zero
+        if: steps.runtime.outputs.cache-hit != 'true'
+        working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys
+          path = pathlib.Path("work/mobile/src/hotspot/os_cpu/bsd_zero/os_bsd_zero.cpp")
+          text = path.read_text()
+          if "zero-ios-bench: signal context" in text:
+              print("already patched")
+              sys.exit(0)
+          anchor = """address os::Posix::ucontext_get_pc(const ucontext_t* uc) {
+  ShouldNotCallThis();
+  return nullptr;
+}
+
+void os::Posix::ucontext_set_pc(ucontext_t * uc, address pc) {
+  ShouldNotCallThis();
+}"""
+          if anchor not in text:
+              sys.exit("os_bsd_zero.cpp ucontext anchor not found")
+          replacement = """#if defined(AARCH64) && defined(__APPLE__)
+// zero-ios-bench: signal context on Apple arm64. Without these the handler for
+// any fault aborts with ShouldNotCall() instead of acting on the real PC.
+address os::Posix::ucontext_get_pc(const ucontext_t* uc) {
+  return (address)uc->uc_mcontext->__ss.__pc;
+}
+
+void os::Posix::ucontext_set_pc(ucontext_t* uc, address pc) {
+  uc->uc_mcontext->__ss.__pc = (uint64_t)pc;
+}
+#else
+""" + anchor + """
+#endif"""
           path.write_text(text.replace(anchor, replacement, 1))
           print("patched", path)
           PY
