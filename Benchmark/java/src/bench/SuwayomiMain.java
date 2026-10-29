@@ -62,6 +62,7 @@ public final class SuwayomiMain {
         System.setProperty("suwayomi.tachidesk.config.server.rootDir", root.toString());
         System.setProperty("suwayomi.tachidesk.config.server.ip", "127.0.0.1");
         System.setProperty("suwayomi.tachidesk.config.server.port", Integer.toString(port));
+        System.setProperty("suwayomi.tachidesk.config.server.webUIEnabled", "false");
         System.setProperty("suwayomi.tachidesk.config.server.initialOpenInBrowserEnabled", "false");
         System.setProperty("suwayomi.tachidesk.config.server.kcefEnabled", "false");
         System.setProperty("suwayomi.tachidesk.config.server.systemTrayEnabled", "false");
