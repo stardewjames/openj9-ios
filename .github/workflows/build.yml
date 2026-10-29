@@ -19,6 +19,10 @@ on:
         description: Build HotSpot Zero for macOS arm64 and run the benchmark baseline
         type: boolean
         default: false
+      benchmark:
+        description: Run the Simulator benchmark (two passes, opposite order)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -209,14 +213,16 @@ jobs:
           work/sdk-smoke/OpenJ9/scripts/smoke-test-simulator.sh --out "$PWD/work/smoke" "${args[@]}"
 
       - name: Simulator benchmark
-        if: matrix.desktop == 'headless'
+        if: ${{ matrix.desktop == 'headless' && github.event_name == 'workflow_dispatch' && inputs.benchmark }}
         env:
           HOST_JAVA_HOME: ${{ env.SEMERU_HOME }}
-          OPENJ9_BENCH_REVERSE: '1'
-          OPENJ9_BENCH_WARMUP: '1000'
-          OPENJ9_BENCH_REPS: '5'
         run: |
-          work/sdk-smoke/OpenJ9/scripts/smoke-test-simulator.sh --bench --out "$PWD/work/bench"
+          for pass in 1 2; do
+            reverse=0
+            [[ $pass == 2 ]] && reverse=1
+            OPENJ9_BENCH_REVERSE=$reverse OPENJ9_BENCH_WARMUP=1000 OPENJ9_BENCH_REPS=7 \
+              work/sdk-smoke/OpenJ9/scripts/smoke-test-simulator.sh --bench --out "$PWD/work/bench-$pass"
+          done
 
       - name: Upload SwiftPM SDK
         if: always()
@@ -235,7 +241,7 @@ jobs:
           name: smoke-logs-${{ matrix.desktop }}
           path: |
             work/smoke
-            work/bench
+            work/bench-*
           if-no-files-found: ignore
 
   zero-baseline:
