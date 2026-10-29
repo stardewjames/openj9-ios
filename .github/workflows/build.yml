@@ -19,6 +19,10 @@ on:
         description: Retained for compatibility; the benchmark is built on every full run
         type: boolean
         default: false
+      build_ipa:
+        description: Build an unsigned iPhone IPA (no benchmark run)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -268,6 +272,52 @@ jobs:
         with:
           name: Benchmark-sample
           path: work/sample/Build/Products/Debug-iphonesimulator/BenchOpenJ9.app
+          if-no-files-found: error
+
+  ipa:
+    needs: package
+    if: ${{ inputs.build_ipa }}
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: brew install xcodegen
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: OpenJ9-iOS-headless-xcframeworks
+          path: work/sdk
+
+      - name: Build an unsigned device app
+        env:
+          HOST_JAVA_HOME: ${{ env.JAVA_HOME }}
+        run: |
+          ditto -x -k work/sdk/OpenJ9-iOS-headless.zip work/sdk/unpacked
+          mkdir -p Artifacts/XCFrameworks
+          cp -R work/sdk/unpacked/OpenJ9/Artifacts/XCFrameworks/. Artifacts/XCFrameworks/
+          scripts/generate-package.sh --frameworks-dir Artifacts/XCFrameworks
+          xcodegen generate --spec Benchmark/project.yml --project Benchmark
+          xcodebuild -project Benchmark/Benchmark.xcodeproj -scheme BenchOpenJ9 \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath work/ipa ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build
+          mkdir -p work/ipa/Payload
+          cp -R work/ipa/Build/Products/Release-iphoneos/BenchOpenJ9.app work/ipa/Payload/
+          (cd work/ipa && zip -qry BenchOpenJ9-unsigned.ipa Payload)
+
+      - name: Upload the unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BenchOpenJ9-unsigned-ipa
+          path: work/ipa/BenchOpenJ9-unsigned.ipa
           if-no-files-found: error
 
   release:
