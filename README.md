@@ -60,7 +60,7 @@ These builds use separate `build/ios-iphoneos-core` and `build/ios-iphonesimulat
 
 Package their `images/jmods` using the normal packaging commands, substituting the `-core` paths. The packager automatically omits desktop native frameworks and does not download or bundle fonts. Regenerate `Package.swift` from that framework set; OpenJ9Kit itself has no AWT/font/image dependency. Run `scripts/smoke-test-simulator.sh --disable-java-desktop` to verify core Java/JNI execution and the absence of desktop modules, APIs, frameworks and fonts.
 
-CI builds both configurations for device and Simulator. Their binary artifacts are named `OpenJ9-iOS-headless-xcframeworks` and `OpenJ9-iOS-core-xcframeworks`; do not mix slices or manifests between configurations.
+Development CI builds only the headless configuration for device and Simulator. Core-only builds are deferred to release tags or an explicit workflow dispatch with `include_core=true`. Variant artifacts are named `OpenJ9-iOS-headless-xcframeworks` and `OpenJ9-iOS-core-xcframeworks`; do not mix slices or manifests between configurations.
 
 ## Embed
 

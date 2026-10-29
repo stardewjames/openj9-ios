@@ -11,6 +11,10 @@ on:
         description: Stop after configure
         type: boolean
         default: false
+      include_core:
+        description: Also validate the core-only variant (release validation)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,7 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         sdk: [iphonesimulator, iphoneos]
-        desktop: [headless, core]
+        desktop: ${{ fromJSON((github.ref_type == 'tag' || inputs.include_core) && '["headless","core"]' || '["headless"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -106,7 +110,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        desktop: [headless, core]
+        desktop: ${{ fromJSON((github.ref_type == 'tag' || inputs.include_core) && '["headless","core"]' || '["headless"]') }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
