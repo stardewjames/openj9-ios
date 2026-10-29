@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build a benchmark app and run it in a disposable iOS Simulator.
 #
-# Usage: run.sh <openj9|zero> [--mode bench|compat|all] [--out <dir>]
+# Usage: run.sh <openj9|zero> [--mode bench|compat|all|idle|suwayomi|suwayomi-idle] [--out <dir>]
 #               [--timeout <seconds>] [--device-type <name>] [--keep-device]
 #
 #   openj9  builds BenchOpenJ9; the OpenJ9 SwiftPM package must resolve, which
@@ -39,6 +39,20 @@ while [[ $# -gt 0 ]]; do
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+case "$MODE" in
+    all|bench|compat|idle|suwayomi|suwayomi-idle) ;;
+    *) echo "unknown benchmark mode: $MODE" >&2; exit 2 ;;
+esac
+if [[ "$MODE" == suwayomi* ]]; then
+    [[ -n "${SUWAYOMI_JAR:-}" && -f "$SUWAYOMI_JAR" ]] || {
+        echo "set SUWAYOMI_JAR to the Suwayomi Server release jar" >&2; exit 2;
+    }
+    SUWAYOMI_JAR="$(cd "$(dirname "$SUWAYOMI_JAR")" && pwd)/$(basename "$SUWAYOMI_JAR")"
+fi
+export SUWAYOMI_JAR="${SUWAYOMI_JAR:-}"
+for key in BENCH_WARMUP BENCH_REPS BENCH_DURATION BENCH_SAMPLE_INTERVAL SUWAYOMI_PORT SUWAYOMI_STARTUP_TIMEOUT SUWAYOMI_CONCURRENCY; do
+    if [[ -n "${!key:-}" ]]; then export "SIMCTL_CHILD_$key=${!key}"; fi
+done
 export BENCH_MODE="$MODE"
 
 for tool in xcrun xcodebuild xcodegen python3; do
@@ -67,6 +81,7 @@ xcodebuild -project "$HERE/Benchmark.xcodeproj" -scheme "$SCHEME" \
     -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
     -derivedDataPath "$OUT/DerivedData" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
     HOST_JAVA_HOME="$HOST_JAVA_HOME" \
+    SUWAYOMI_JAR="$SUWAYOMI_JAR" \
     CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES 'CODE_SIGN_IDENTITY=-' build \
     2>&1 | tee "$OUT/build.log" | grep -E "error:|warning: .*Benchmark|BUILD (SUCCEEDED|FAILED)" || true
 APP="$OUT/DerivedData/Build/Products/Debug-iphonesimulator/$SCHEME.app"
@@ -135,5 +150,5 @@ if ! grep -q '^BENCH_OK' "$LOG"; then
     exit 1
 fi
 echo "=== results ($SCHEME, mode $MODE) ==="
-grep -E '^(BENCH_HOST|COMPAT|BENCH) ' "$LOG"
+grep -E '^(BENCH_HOST|COMPAT|BENCH |SUWAYOMI_|IDLE_)' "$LOG" || true
 echo "log: $LOG"

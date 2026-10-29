@@ -49,6 +49,12 @@ targetTemplates:
         script: |
           set -euo pipefail
           cp "$DERIVED_FILE_DIR/bench.jar" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/bench.jar"
+          if [[ -n "${SUWAYOMI_JAR:-}" ]]; then
+            test -f "$SUWAYOMI_JAR" || { echo "error: SUWAYOMI_JAR does not exist: $SUWAYOMI_JAR" >&2; exit 1; }
+            cp "$SUWAYOMI_JAR" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/suwayomi.jar"
+          else
+            rm -f "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/suwayomi.jar"
+          fi
         basedOnDependencyAnalysis: false
 targets:
   BenchOpenJ9:

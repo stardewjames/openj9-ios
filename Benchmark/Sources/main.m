@@ -13,6 +13,107 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <mach/mach.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <time.h>
+#include <unistd.h>
+
+static atomic_bool gSampling;
+static pthread_t gSamplerThread;
+static BOOL gSamplerStarted;
+
+static float sampleProcess(void) {
+    task_vm_info_data_t vm = {0};
+    mach_msg_type_number_t vmCount = TASK_VM_INFO_COUNT;
+    kern_return_t vmStatus = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &vmCount);
+    task_basic_info_64_data_t basic = {0};
+    mach_msg_type_number_t basicCount = TASK_BASIC_INFO_64_COUNT;
+    kern_return_t basicStatus = task_info(mach_task_self(), TASK_BASIC_INFO_64, (task_info_t)&basic, &basicCount);
+    task_thread_times_info_data_t threads = {0};
+    mach_msg_type_number_t threadCount = TASK_THREAD_TIMES_INFO_COUNT;
+    kern_return_t threadStatus = task_info(mach_task_self(), TASK_THREAD_TIMES_INFO, (task_info_t)&threads, &threadCount);
+    __block float battery = -1;
+    __block UIDeviceBatteryState state = UIDeviceBatteryStateUnknown;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        battery = UIDevice.currentDevice.batteryLevel;
+        state = UIDevice.currentDevice.batteryState;
+    });
+    double cpu = -1;
+    if (basicStatus == KERN_SUCCESS && threadStatus == KERN_SUCCESS) {
+        cpu = basic.user_time.seconds + basic.system_time.seconds +
+              threads.user_time.seconds + threads.system_time.seconds +
+              (basic.user_time.microseconds + basic.system_time.microseconds +
+               threads.user_time.microseconds + threads.system_time.microseconds) / 1000000.0;
+    }
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    printf("IDLE_SAMPLE monotonic_s=%.3f cpu_s=%.6f resident_bytes=%lld footprint_bytes=%lld battery=%.3f battery_state=%ld thermal=%ld low_power=%d\n",
+           now.tv_sec + now.tv_nsec / 1e9, cpu,
+           basicStatus == KERN_SUCCESS ? (long long)basic.resident_size : -1LL,
+           vmStatus == KERN_SUCCESS ? (long long)vm.phys_footprint : -1LL,
+           battery, (long)state, (long)NSProcessInfo.processInfo.thermalState,
+           NSProcessInfo.processInfo.lowPowerModeEnabled);
+    fflush(stdout);
+    return battery;
+}
+
+static void *sampleThread(void *unused) {
+    (void)unused;
+    @autoreleasepool {
+        int interval = 10;
+        const char *value = getenv("BENCH_SAMPLE_INTERVAL");
+        if (value) {
+            int parsed = atoi(value);
+            if (parsed >= 1 && parsed <= 3600) interval = parsed;
+        }
+        struct timespec started, ended;
+        clock_gettime(CLOCK_MONOTONIC, &started);
+        float initialBattery = sampleProcess();
+        int elapsed = 0;
+        while (atomic_load(&gSampling)) {
+            sleep(1);
+            if (++elapsed >= interval && atomic_load(&gSampling)) {
+                sampleProcess();
+                elapsed = 0;
+            }
+        }
+        float finalBattery = sampleProcess();
+        clock_gettime(CLOCK_MONOTONIC, &ended);
+        double duration = ended.tv_sec - started.tv_sec + (ended.tv_nsec - started.tv_nsec) / 1e9;
+        if (initialBattery >= 0 && finalBattery >= 0) {
+            printf("IDLE_BATTERY duration_s=%.3f start=%.3f end=%.3f drain_percentage_points=%.3f\n",
+                   duration, initialBattery, finalBattery, (initialBattery - finalBattery) * 100.0);
+        } else {
+            printf("IDLE_BATTERY duration_s=%.3f drain_percentage_points=unavailable\n", duration);
+        }
+        fflush(stdout);
+    }
+    return NULL;
+}
+
+static void JNICALL startSampling(JNIEnv *env, jclass cls) {
+    (void)cls;
+    atomic_store(&gSampling, true);
+    int status = pthread_create(&gSamplerThread, NULL, sampleThread, NULL);
+    if (status) {
+        atomic_store(&gSampling, false);
+        jclass exception = (*env)->FindClass(env, "java/lang/IllegalStateException");
+        (*env)->ThrowNew(env, exception, "unable to start sampling thread");
+        return;
+    }
+    gSamplerStarted = YES;
+}
+
+static void JNICALL stopSampling(JNIEnv *env, jclass cls) {
+    (void)env;
+    (void)cls;
+    atomic_store(&gSampling, false);
+    if (gSamplerStarted) {
+        pthread_join(gSamplerThread, NULL);
+        gSamplerStarted = NO;
+    }
+}
 
 #ifdef BENCH_ZERO
 static NSString *const kRuntimeName = @"zero";
@@ -59,9 +160,18 @@ static void runJvm(void) {
         NSString *javaHome = javaHomeForBundle();
         NSString *temporary = NSTemporaryDirectory();
         NSString *mode = environmentValue(@"BENCH_MODE", @"all");
+        BOOL extended = [mode isEqualToString:@"idle"] || [mode isEqualToString:@"suwayomi"] || [mode isEqualToString:@"suwayomi-idle"];
+        BOOL needsServer = [mode isEqualToString:@"suwayomi"] || [mode isEqualToString:@"suwayomi-idle"];
+        NSString *serverJar = [NSBundle.mainBundle pathForResource:@"suwayomi" ofType:@"jar"];
+        if (needsServer && !serverJar) {
+            emit(@"BENCH_APP_FAIL missing suwayomi.jar; set SUWAYOMI_JAR at build time");
+            finish(1);
+            return;
+        }
 
-        char classPath[4096], home[4096], tmp[4096], warmup[128], reps[128], errorFile[4096];
-        snprintf(classPath, sizeof(classPath), "-Djava.class.path=%s", jar.UTF8String);
+        char classPath[8192], home[4096], tmp[4096], warmup[128], reps[128], errorFile[4096];
+        snprintf(classPath, sizeof(classPath), "-Djava.class.path=%s%s%s", jar.UTF8String,
+                 needsServer ? ":" : "", needsServer ? serverJar.UTF8String : "");
         snprintf(home, sizeof(home), "-Djava.home=%s", javaHome.UTF8String);
         snprintf(tmp, sizeof(tmp), "-Djava.io.tmpdir=%s", temporary.UTF8String);
         snprintf(errorFile, sizeof(errorFile), "-XX:ErrorFile=%s/hs_err_%%p.log", temporary.UTF8String);
@@ -69,7 +179,7 @@ static void runJvm(void) {
                  environmentValue(@"BENCH_WARMUP", @"400").UTF8String);
         snprintf(reps, sizeof(reps), "-Dbench.reps=%s", environmentValue(@"BENCH_REPS", @"5").UTF8String);
 
-        JavaVMOption options[12];
+        JavaVMOption options[16];
         int count = 0;
         options[count++].optionString = classPath;
         options[count++].optionString = home;
@@ -118,12 +228,24 @@ static void runJvm(void) {
             return;
         }
 
-        jclass main = (*env)->FindClass(env, "bench/BenchMain");
+        jclass main = (*env)->FindClass(env, extended ? "bench/SuwayomiMain" : "bench/BenchMain");
         if (main == NULL) {
             (*env)->ExceptionDescribe(env);
-            emit(@"BENCH_APP_FAIL class bench.BenchMain not found");
+            emit(@"BENCH_APP_FAIL benchmark entry class not found");
             finish(1);
             return;
+        }
+        if (extended) {
+            JNINativeMethod methods[] = {
+                {"startSampling", "()V", (void *)startSampling},
+                {"stopSampling", "()V", (void *)stopSampling}
+            };
+            if ((*env)->RegisterNatives(env, main, methods, 2) != JNI_OK) {
+                (*env)->ExceptionDescribe(env);
+                emit(@"BENCH_APP_FAIL registering sampler");
+                finish(1);
+                return;
+            }
         }
         jmethodID entry = (*env)->GetStaticMethodID(env, main, "main", "([Ljava/lang/String;)V");
         jclass stringClass = (*env)->FindClass(env, "java/lang/String");
@@ -132,7 +254,7 @@ static void runJvm(void) {
         (*env)->CallStaticVoidMethod(env, main, entry, argv);
         if ((*env)->ExceptionCheck(env)) {
             (*env)->ExceptionDescribe(env);
-            emit(@"BENCH_APP_FAIL BenchMain threw");
+            emit(@"BENCH_APP_FAIL benchmark entry threw");
             finish(1);
             return;
         }
@@ -154,6 +276,7 @@ static void *startupThread(void *context) {
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     (void)application;
     (void)options;
+    UIDevice.currentDevice.batteryMonitoringEnabled = YES;
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     UIViewController *controller = [UIViewController new];
     gOutput = [[UITextView alloc] initWithFrame:self.window.bounds];

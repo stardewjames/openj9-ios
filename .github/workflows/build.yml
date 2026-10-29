@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
       build_sample:
-        description: Also build the standalone benchmark sample app
+        description: Retained for compatibility; the benchmark is built on every full run
         type: boolean
         default: false
 
@@ -227,40 +227,26 @@ jobs:
           if-no-files-found: ignore
   sample:
     needs: package
-    if: ${{ inputs.build_sample }}
+    if: ${{ !inputs.configure_only }}
     runs-on: macos-15
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the sample is present
-        id: present
-        run: |
-          if [[ -f Benchmark/project.yml ]]; then
-            echo "found=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "found=0" >> "$GITHUB_OUTPUT"
-            echo "Benchmark/ is not in this revision; nothing to build." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
       - name: Install tools
-        if: steps.present.outputs.found == '1'
         run: brew install xcodegen
 
       - uses: actions/setup-java@v4
-        if: steps.present.outputs.found == '1'
         with:
           distribution: temurin
           java-version: "21"
 
       - uses: actions/download-artifact@v4
-        if: steps.present.outputs.found == '1'
         with:
           name: OpenJ9-iOS-headless-xcframeworks
           path: work/sdk
 
       - name: Build the sample against the packaged runtime
-        if: steps.present.outputs.found == '1'
         env:
           HOST_JAVA_HOME: ${{ env.JAVA_HOME }}
         run: |
@@ -278,12 +264,11 @@ jobs:
             CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES 'CODE_SIGN_IDENTITY=-' build
 
       - name: Upload the sample app
-        if: steps.present.outputs.found == '1'
         uses: actions/upload-artifact@v4
         with:
           name: Benchmark-sample
           path: work/sample/Build/Products/Debug-iphonesimulator/BenchOpenJ9.app
-          if-no-files-found: warn
+          if-no-files-found: error
 
   release:
     needs: [package, swift-api]

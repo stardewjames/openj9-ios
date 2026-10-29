@@ -62,6 +62,12 @@ Package their `images/jmods` using the normal packaging commands, substituting t
 
 Development CI builds only the headless configuration for device and Simulator. Core-only builds are deferred to release tags or an explicit workflow dispatch with `include_core=true`. Variant artifacts are named `OpenJ9-iOS-headless-xcframeworks` and `OpenJ9-iOS-core-xcframeworks`; do not mix slices or manifests between configurations.
 
+Every full CI run also compiles the `BenchOpenJ9` benchmark app for the arm64
+iOS Simulator against the packaged headless runtime and uploads it as
+`Benchmark-sample`. This is a compile check, not a benchmark execution; the
+configure-only workflow skips packaging and the app build. See
+[`Benchmark/README.md`](Benchmark/README.md) for local builds and runs.
+
 ## Embed
 
 See [the embedding guide](docs/EMBEDDING.md) and `Samples/HelloJava` for the Objective-C/Swift API, Java classpath setup and JNI access.

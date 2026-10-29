@@ -26,6 +26,14 @@ console, and prints the result lines. `--mode bench` skips compatibility probes,
 The same apps run on a device: open `Benchmark/project.yml` with XcodeGen
 (`xcodegen generate`) and use your normal signing.
 
+Full CI runs compile `BenchOpenJ9` for the arm64 iOS Simulator using the
+headless SDK artifact produced by the packaging job, Java 21 and XcodeGen.
+The resulting app is uploaded as `Benchmark-sample`. CI does not launch the
+benchmark or build `BenchZero`, which requires a separately packaged Zero
+runtime. Configure-only runs skip the app build.
+
+See [Suwayomi benchmarks](SUWAYOMI.md) for the stress and idle scenarios.
+
 ## Output
 
 ```
