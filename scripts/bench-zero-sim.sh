@@ -61,6 +61,15 @@ cleanup() {
     status=$?
     trap - EXIT
     if [[ -n "$UDID" ]]; then
+        # HotSpot writes hs_err_<pid>.log into the app's sandbox; keep it before
+        # the device is deleted so the faulting PC survives.
+        data=$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data 2>/dev/null || true)
+        if [[ -n "$data" && -d "$data/tmp" ]]; then
+            for report_file in "$data"/tmp/hs_err_*.log; do
+                [[ -f "$report_file" ]] || continue
+                cp "$report_file" "$OUT/" 2>/dev/null || true
+            done
+        fi
         xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
         xcrun simctl shutdown "$UDID" >/dev/null 2>&1 || true
         xcrun simctl delete "$UDID" >/dev/null 2>&1 || true
@@ -68,6 +77,11 @@ cleanup() {
     if [[ "$SUCCESS" != 1 ]]; then
         echo "=== Simulator console (last 120 lines) ===" >&2
         tail -n 120 "$LOG" >&2 || true
+        for report_file in "$OUT"/hs_err_*.log; do
+            [[ -f "$report_file" ]] || continue
+            echo "=== $report_file ===" >&2
+            grep -E "^#|^si_|^siginfo|^Registers|^ *[a-z0-9]+=" "$report_file" >&2 || true
+        done
         echo "=== Build log (last 60 lines) ===" >&2
         [[ ! -f "$BUILD_LOG" ]] || tail -n 60 "$BUILD_LOG" >&2
         [[ $status -ne 0 ]] || status=1
