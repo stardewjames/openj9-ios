@@ -326,24 +326,38 @@ jobs:
           git -C third_party/moeReader checkout -q FETCH_HEAD -- SuwayomiHost/jvm-ios SuwayomiHost/jvm-options
           chmod +x third_party/moeReader/SuwayomiHost/jvm-ios/*.sh
 
+      # A cold OpenJDK Mobile build costs ~20 minutes; only redo it when the
+      # pinned sources or scripts change.
+      - name: Restore the packaged runtime
+        id: runtime
+        uses: actions/cache/restore@v4
+        with:
+          path: third_party/moeReader/SuwayomiHost/runtime
+          key: zero-sim-runtime-${{ env.MOERADER_COMMIT }}-${{ hashFiles('scripts/bench-zero-sim.sh', 'Samples/HelloZero/**') }}
+
       - uses: actions/setup-java@v4
+        if: steps.runtime.outputs.cache-hit != 'true'
         with:
           distribution: temurin
           java-version: "26"
 
       - name: Fetch OpenJDK Mobile sources
+        if: steps.runtime.outputs.cache-hit != 'true'
         working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
         run: ./fetch-openjdk.sh
 
       - name: Build the macOS host JDK
+        if: steps.runtime.outputs.cache-hit != 'true'
         working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
         run: ./build-openjdk-macos.sh
 
       - name: Build HotSpot Zero for the Simulator
+        if: steps.runtime.outputs.cache-hit != 'true'
         working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
         run: ./build-openjdk-ios.sh iphonesimulator
 
       - name: Package the runtime
+        if: steps.runtime.outputs.cache-hit != 'true'
         working-directory: third_party/moeReader/SuwayomiHost
         run: |
           # package.sh only copies the host jar; a stub satisfies it because this
@@ -352,6 +366,13 @@ jobs:
           jar --create --file host/build/libs/suwayomi-host.jar -C /tmp/empty-jar .
           SKIP_HOST_BUILD=1 OUT="$PWD/runtime" ./jvm-ios/package.sh
           ls "$PWD/runtime/native/iphonesimulator" | head
+
+      - name: Save the packaged runtime
+        if: steps.runtime.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: third_party/moeReader/SuwayomiHost/runtime
+          key: ${{ steps.runtime.outputs.cache-primary-key }}
 
       - name: Upload the packaged runtime
         uses: actions/upload-artifact@v4

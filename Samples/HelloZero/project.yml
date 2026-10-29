@@ -31,6 +31,9 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY[sdk=iphonesimulator*]: "-"
+        # The kit already vendors unmodified OpenJDK JNI headers; JNI is ABI-stable
+        # across JDK majors, so the same headers serve the Zero VM.
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/../../Sources/OpenJ9Kit/include"
     preBuildScripts:
       - name: Compile Bench jar
         script: |
