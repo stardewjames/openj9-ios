@@ -65,6 +65,23 @@ jobs:
       - name: Fetch and patch sources
         run: scripts/fetch-sources.sh
 
+      - name: Archive corresponding runtime sources
+        if: github.ref_type == 'tag' && matrix.sdk == 'iphoneos' && matrix.desktop == 'headless'
+        run: |
+          tar --exclude=.git -czf "$RUNNER_TEMP/OpenJ9-iOS-source.tar.gz" \
+            Sources Samples docs scripts patches README.md sources.env work/src/jdk
+          (cd "$RUNNER_TEMP" && shasum -a 256 OpenJ9-iOS-source.tar.gz >OpenJ9-iOS-source.tar.gz.sha256)
+
+      - name: Upload corresponding runtime sources
+        if: github.ref_type == 'tag' && matrix.sdk == 'iphoneos' && matrix.desktop == 'headless'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenJ9-iOS-source
+          path: |
+            ${{ runner.temp }}/OpenJ9-iOS-source.tar.gz
+            ${{ runner.temp }}/OpenJ9-iOS-source.tar.gz.sha256
+          if-no-files-found: error
+
       - name: Restore ccache
         uses: actions/cache/restore@v4
         with:
@@ -216,10 +233,14 @@ jobs:
         with:
           pattern: OpenJ9-iOS-*-xcframeworks
           path: work/release
+      - uses: actions/download-artifact@v4
+        with:
+          name: OpenJ9-iOS-source
+          path: work/release/source
       - name: Publish verified SDKs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "$GITHUB_REF_NAME" --notes "OpenJ9 Java 21 for iOS. Download either SwiftPM SDK, unzip, and add OpenJ9 as a local Xcode package. Interpreter-only; physical-device execution and App Store approval are not certified." \
-            work/release/*/*.zip work/release/*/*.sha256
+            work/release/*/*.zip work/release/*/*.sha256 work/release/source/*.tar.gz

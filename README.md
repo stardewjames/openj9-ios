@@ -87,3 +87,5 @@ Interpreter-only execution is **not** an App Store acceptance guarantee. Host ap
 For development, separate clones can be kept in `upstream/openjdk`, `upstream/openj9`, and `upstream/omr`; use `scripts/export-patches.sh` to export edits. For the nested build layout, pass all three source directory paths explicitly.
 
 Upstream Java/OpenJ9/OMR code retains its upstream licenses, including applicable Classpath/Assembly exceptions. Distributing a runtime requires preserving its notices and satisfying the corresponding source-license obligations.
+
+Tagged releases also provide `OpenJ9-iOS-source.tar.gz` and its checksum: the pinned, patched OpenJDK/OpenJ9/OMR source trees plus the API sources, build scripts and patches used for the runtime. Preserve the runtime's bundled legal notices when redistributing it.
