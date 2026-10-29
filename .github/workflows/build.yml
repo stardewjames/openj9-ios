@@ -15,16 +15,8 @@ on:
         description: Also validate the core-only variant (release validation)
         type: boolean
         default: false
-      zero_baseline:
-        description: Build HotSpot Zero for macOS arm64 and run the benchmark baseline
-        type: boolean
-        default: false
-      benchmark:
-        description: Run the Simulator benchmark (two passes, opposite order)
-        type: boolean
-        default: false
-      zero_ios:
-        description: Build HotSpot Zero for the iOS Simulator (moeReader source) and benchmark it
+      build_sample:
+        description: Also build the standalone benchmark sample app
         type: boolean
         default: false
 
@@ -32,12 +24,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.zero_ios && 'zeroios' || inputs.zero_baseline && 'zero' || inputs.benchmark && 'bench' || 'ci' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   swift-api:
-    if: ${{ !inputs.zero_ios }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +49,6 @@ jobs:
 
   jdk:
     name: jdk (${{ matrix.sdk }}, ${{ matrix.desktop }})
-    if: ${{ !inputs.zero_ios }}
     runs-on: macos-15
     timeout-minutes: 360
     strategy:
@@ -154,7 +144,7 @@ jobs:
 
   package:
     needs: jdk
-    if: ${{ !inputs.configure_only && !inputs.zero_ios }}
+    if: ${{ !inputs.configure_only }}
     runs-on: macos-15
     name: package (${{ matrix.desktop }})
     strategy:
@@ -218,18 +208,6 @@ jobs:
           [[ "${{ matrix.desktop }}" != core ]] || args+=(--disable-java-desktop)
           work/sdk-smoke/OpenJ9/scripts/smoke-test-simulator.sh --out "$PWD/work/smoke" "${args[@]}"
 
-      - name: Simulator benchmark
-        if: ${{ matrix.desktop == 'headless' && github.event_name == 'workflow_dispatch' && inputs.benchmark }}
-        env:
-          HOST_JAVA_HOME: ${{ env.SEMERU_HOME }}
-        run: |
-          for pass in 1 2; do
-            reverse=0
-            [[ $pass == 2 ]] && reverse=1
-            OPENJ9_BENCH_REVERSE=$reverse OPENJ9_BENCH_WARMUP=1000 OPENJ9_BENCH_REPS=7 \
-              work/sdk-smoke/OpenJ9/scripts/smoke-test-simulator.sh --bench --out "$PWD/work/bench-$pass"
-          done
-
       - name: Upload SwiftPM SDK
         if: always()
         uses: actions/upload-artifact@v4
@@ -245,254 +223,67 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: smoke-logs-${{ matrix.desktop }}
-          path: |
-            work/smoke
-            work/bench-*
+          path: work/smoke
           if-no-files-found: ignore
-
-  zero-baseline:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.zero_baseline }}
+  sample:
+    needs: package
+    if: ${{ inputs.build_sample }}
     runs-on: macos-15
-    timeout-minutes: 300
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install tools
-        run: brew install autoconf make
-
-      - name: Fetch Zero-capable JDK sources
+      - name: Check the sample is present
+        id: present
         run: |
-          curl -fsSL --retry 3 -o work-jdk21u.tar.gz \
-            "https://github.com/openjdk/jdk21u/archive/refs/tags/jdk-21.0.13+9.tar.gz"
-          mkdir -p jdk-src && tar -xzf work-jdk21u.tar.gz -C jdk-src
-          src="$(find jdk-src -mindepth 1 -maxdepth 1 -type d -print -quit)"
-          [[ -n "$src" && -f "$src/configure" ]] || { echo "no JDK source tree" >&2; exit 1; }
-          echo "JDK_SRC=$PWD/$src" >> "$GITHUB_ENV"
-
-      - name: Download boot JDK
-        run: |
-          source sources.env
-          mkdir -p work/semeru/extract
-          curl -fsSL --retry 3 -o work/semeru/semeru.tar.gz "$SEMERU_JDK_URL"
-          tar -xzf work/semeru/semeru.tar.gz -C work/semeru/extract
-          java="$(find work/semeru/extract -maxdepth 6 -type f -path '*/bin/java' -print -quit)"
-          [[ -n "$java" ]] || { echo "Semeru archive has no JDK" >&2; exit 1; }
-          echo "BOOT_JDK=$(cd "$(dirname "$java")/.." && pwd)" >> "$GITHUB_ENV"
-
-      - name: Build HotSpot Zero (macOS arm64)
-        run: |
-          cd "$JDK_SRC"
-          bash configure --with-jvm-variants=zero --with-boot-jdk="$BOOT_JDK" \
-            --with-debug-level=release --with-native-debug-symbols=none \
-            --disable-warnings-as-errors --with-jobs="$(sysctl -n hw.ncpu)"
-          make jdk-image LOG=warn
-
-      - name: Run benchmark baseline
-        run: |
-          mkdir -p work/zero-classes
-          "$BOOT_JDK/bin/javac" --release 21 -d work/zero-classes Samples/HelloJava/java/src/Bench.java
-          ZERO_BIN="$(find "$JDK_SRC/build" -maxdepth 5 -type f -path '*/images/jdk/bin/java' -print -quit)"
-          [[ -n "$ZERO_BIN" ]] || { echo "no built java" >&2; exit 1; }
-          "$ZERO_BIN" -version
-          "$ZERO_BIN" -Xint -XX:-UseCompressedOops -XX:-UseCompressedClassPointers \
-            -Xms512m -Xmx512m -cp work/zero-classes Bench | tee work/zero-bench.txt
-
-      - name: Upload baseline
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zero-baseline
-          path: work/zero-bench.txt
-          if-no-files-found: ignore
-
-  zero-ios-build:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.zero_ios }}
-    runs-on: macos-26
-    timeout-minutes: 360
-    env:
-      MOERADER_COMMIT: cbceaaa24474f856e877aa76acf8535921b1bb74
-    steps:
-      - uses: actions/checkout@v4
+          if [[ -f Benchmark/project.yml ]]; then
+            echo "found=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=0" >> "$GITHUB_OUTPUT"
+            echo "Benchmark/ is not in this revision; nothing to build." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Install tools
-        run: |
-          brew install autoconf make
-          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
-
-      # The Zero port itself (scripts, pinned sources, libffi) lives in moeReader.
-      - name: Fetch the pinned Zero build scripts
-        run: |
-          git init -q third_party/moeReader
-          git -C third_party/moeReader remote add origin https://github.com/stardewjames/moeReader
-          git -C third_party/moeReader fetch -q --depth 1 origin "$MOERADER_COMMIT"
-          git -C third_party/moeReader checkout -q FETCH_HEAD -- SuwayomiHost/jvm-ios SuwayomiHost/jvm-options
-          chmod +x third_party/moeReader/SuwayomiHost/jvm-ios/*.sh
-
-      # A cold OpenJDK Mobile build costs ~20 minutes; only redo it when the
-      # pinned sources or scripts change.
-      - name: Restore the packaged runtime
-        id: runtime
-        uses: actions/cache/restore@v4
-        with:
-          path: third_party/moeReader/SuwayomiHost/runtime
-          key: zero-sim-runtime-${{ env.MOERADER_COMMIT }}-v3
-
-      - uses: actions/setup-java@v4
-        if: steps.runtime.outputs.cache-hit != 'true'
-        with:
-          distribution: temurin
-          java-version: "26"
-
-      - name: Fetch OpenJDK Mobile sources
-        if: steps.runtime.outputs.cache-hit != 'true'
-        working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
-        run: ./fetch-openjdk.sh
-
-      - name: Build the macOS host JDK
-        if: steps.runtime.outputs.cache-hit != 'true'
-        working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
-        run: ./build-openjdk-macos.sh
-
-      # iOS denies PROT_EXEC on anonymous memory, so HotSpot's code-heap commit
-      # fails before the VM starts ("Could not reserve enough space in CodeCache").
-      # Zero executes no generated code, so the heap is committed read/write only.
-      - name: Make iOS code heaps non-executable
-        if: steps.runtime.outputs.cache-hit != 'true'
-        working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
-        run: |
-          python3 - <<'PY'
-          import pathlib, sys
-          path = pathlib.Path("work/mobile/src/hotspot/os/bsd/os_bsd.cpp")
-          text = path.read_text()
-          if "zero-ios-bench" in text:
-              print("already patched")
-              sys.exit(0)
-          anchor = "  int prot = exec ? PROT_READ|PROT_WRITE|PROT_EXEC : PROT_READ|PROT_WRITE;"
-          if anchor not in text:
-              sys.exit("os_bsd.cpp commit-memory anchor not found")
-          replacement = (
-              "#ifdef __IOS__\n"
-              "  // zero-ios-bench: iOS rejects PROT_EXEC on anonymous memory and\n"
-              "  // Zero never executes generated code, so code heaps stay read/write.\n"
-              "  int prot = PROT_READ|PROT_WRITE;\n"
-              "#else\n"
-              + anchor + "\n"
-              "#endif"
-          )
-          path.write_text(text.replace(anchor, replacement, 1))
-          print("patched", path)
-          PY
-
-      # bsd_zero ships ShouldNotCallThis() stubs for the signal-context accessors,
-      # so any handled signal aborts the VM instead of resuming from the faulting
-      # PC. arm64 in the Apple signal context is at __ss.__pc.
-      - name: Add arm64 signal-context accessors to Zero
-        if: steps.runtime.outputs.cache-hit != 'true'
-        working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
-        run: |
-          python3 - <<'PY'
-          import pathlib, sys
-          path = pathlib.Path("work/mobile/src/hotspot/os_cpu/bsd_zero/os_bsd_zero.cpp")
-          text = path.read_text()
-          if "zero-ios-bench: signal context" in text:
-              print("already patched")
-              sys.exit(0)
-          anchor = "\n".join([
-              "address os::Posix::ucontext_get_pc(const ucontext_t* uc) {",
-              "  ShouldNotCallThis();",
-              "  return nullptr;",
-              "}",
-              "",
-              "void os::Posix::ucontext_set_pc(ucontext_t * uc, address pc) {",
-              "  ShouldNotCallThis();",
-              "}",
-          ])
-          if anchor not in text:
-              sys.exit("os_bsd_zero.cpp ucontext anchor not found")
-          replacement = "\n".join([
-              "#if defined(AARCH64) && defined(__APPLE__)",
-              "// zero-ios-bench: signal context on Apple arm64. Without these the",
-              "// handler for any fault aborts with ShouldNotCall() instead of",
-              "// acting on the real PC.",
-              "address os::Posix::ucontext_get_pc(const ucontext_t* uc) {",
-              "  return (address)uc->uc_mcontext->__ss.__pc;",
-              "}",
-              "",
-              "void os::Posix::ucontext_set_pc(ucontext_t* uc, address pc) {",
-              "  uc->uc_mcontext->__ss.__pc = (uint64_t)pc;",
-              "}",
-              "#else",
-              anchor,
-              "#endif",
-          ])
-          path.write_text(text.replace(anchor, replacement, 1))
-          print("patched", path)
-          PY
-
-      - name: Build HotSpot Zero for the Simulator
-        if: steps.runtime.outputs.cache-hit != 'true'
-        working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
-        run: ./build-openjdk-ios.sh iphonesimulator
-
-      - name: Package the runtime
-        if: steps.runtime.outputs.cache-hit != 'true'
-        working-directory: third_party/moeReader/SuwayomiHost
-        run: |
-          # package.sh only copies the host jar; a stub satisfies it because this
-          # benchmark supplies its own Java entry point.
-          mkdir -p host/build/libs /tmp/empty-jar
-          jar --create --file host/build/libs/suwayomi-host.jar -C /tmp/empty-jar .
-          SKIP_HOST_BUILD=1 OUT="$PWD/runtime" ./jvm-ios/package.sh
-          ls "$PWD/runtime/native/iphonesimulator" | head
-
-      - name: Save the packaged runtime
-        if: steps.runtime.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: third_party/moeReader/SuwayomiHost/runtime
-          key: ${{ steps.runtime.outputs.cache-primary-key }}
-
-      - name: Upload the packaged runtime
-        uses: actions/upload-artifact@v4
-        with:
-          name: zero-sim-runtime
-          path: third_party/moeReader/SuwayomiHost/runtime
-          if-no-files-found: error
-
-  zero-ios-bench:
-    needs: zero-ios-build
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.zero_ios }}
-    # The Zero simulator slice targets iOS 26, so it must be linked and run with
-    # an Xcode whose SDK is at least as new.
-    runs-on: macos-26
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install tools
+        if: steps.present.outputs.found == '1'
         run: brew install xcodegen
 
       - uses: actions/setup-java@v4
+        if: steps.present.outputs.found == '1'
         with:
           distribution: temurin
           java-version: "21"
 
       - uses: actions/download-artifact@v4
+        if: steps.present.outputs.found == '1'
         with:
-          name: zero-sim-runtime
-          path: work/zero-sim-runtime
+          name: OpenJ9-iOS-headless-xcframeworks
+          path: work/sdk
 
-      - name: Run the benchmark in the Simulator
+      - name: Build the sample against the packaged runtime
+        if: steps.present.outputs.found == '1'
+        env:
+          HOST_JAVA_HOME: ${{ env.JAVA_HOME }}
         run: |
-          scripts/bench-zero-sim.sh --runtime work/zero-sim-runtime --out "$PWD/work/bench-zero"
+          # The sample consumes the local SwiftPM package, so unpack the SDK's
+          # binary targets where Package.swift expects them.
+          ditto -x -k work/sdk/OpenJ9-iOS-headless.zip work/sdk/unpacked
+          mkdir -p Artifacts/XCFrameworks
+          cp -R work/sdk/unpacked/OpenJ9/Artifacts/XCFrameworks/. Artifacts/XCFrameworks/
+          scripts/generate-package.sh --frameworks-dir Artifacts/XCFrameworks
+          xcodegen generate --spec Benchmark/project.yml --project Benchmark
+          xcodebuild -project Benchmark/Benchmark.xcodeproj -scheme BenchOpenJ9 \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath work/sample ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES 'CODE_SIGN_IDENTITY=-' build
 
-      - name: Upload logs
-        if: always()
+      - name: Upload the sample app
+        if: steps.present.outputs.found == '1'
         uses: actions/upload-artifact@v4
         with:
-          name: zero-sim-bench-logs
-          path: work/bench-zero
-          if-no-files-found: ignore
+          name: Benchmark-sample
+          path: work/sample/Build/Products/Debug-iphonesimulator/BenchOpenJ9.app
+          if-no-files-found: warn
 
   release:
     needs: [package, swift-api]

@@ -1,0 +1,94 @@
+name: Benchmark
+# Two apps, one source tree, one Java jar:
+#   BenchOpenJ9 - OpenJ9 from the SwiftPM package in the repository root.
+#   BenchZero   - HotSpot Zero from static archives; see make-zero-xcconfig.sh.
+options:
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    CLANG_ENABLE_OBJC_ARC: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+    ARCHS: arm64
+packages:
+  OpenJ9:
+    path: ..
+targetTemplates:
+  BenchApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY[sdk=iphonesimulator*]: "-"
+        # The kit already vendors unmodified OpenJDK JNI headers.
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/../Sources/OpenJ9Kit/include"
+    preBuildScripts:
+      - name: Compile benchmark classes
+        script: |
+          set -euo pipefail
+          HOST_JAVA_HOME="${HOST_JAVA_HOME:-${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}}"
+          rm -rf "$DERIVED_FILE_DIR/bench-classes"
+          mkdir -p "$DERIVED_FILE_DIR/bench-classes"
+          "$HOST_JAVA_HOME/bin/javac" --release 21 -encoding UTF-8 \
+            -d "$DERIVED_FILE_DIR/bench-classes" $(find "$SRCROOT/java/src" -name '*.java')
+          "$HOST_JAVA_HOME/bin/jar" --create --file "$DERIVED_FILE_DIR/bench.jar" \
+            -C "$DERIVED_FILE_DIR/bench-classes" .
+        basedOnDependencyAnalysis: false
+    postBuildScripts:
+      - name: Bundle benchmark jar
+        script: |
+          set -euo pipefail
+          cp "$DERIVED_FILE_DIR/bench.jar" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/bench.jar"
+        basedOnDependencyAnalysis: false
+targets:
+  BenchOpenJ9:
+    templates: [BenchApp]
+    dependencies:
+      - package: OpenJ9
+        product: OpenJ9
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.openj9.ios.BenchOpenJ9
+  BenchZero:
+    templates: [BenchApp]
+    # Overwritten by make-zero-xcconfig.sh from a packaged Zero runtime. The
+    # committed placeholder keeps project generation working without one.
+    configFiles:
+      Debug: zero.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.openj9.ios.BenchZero
+        GCC_PREPROCESSOR_DEFINITIONS: ["$(inherited)", "BENCH_ZERO=1"]
+    postBuildScripts:
+      - name: Bundle Zero java home
+        script: |
+          set -euo pipefail
+          : "${ZERO_RUNTIME:?run make-zero-xcconfig.sh with a packaged Zero runtime first}"
+          APP="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          # A statically linked HotSpot uses <bundle>/lib as java.home.
+          rm -rf "$APP/lib"
+          cp -R "$ZERO_RUNTIME/lib" "$APP/lib"
+        basedOnDependencyAnalysis: false
+schemes:
+  BenchOpenJ9:
+    build:
+      targets:
+        BenchOpenJ9: all
+    run:
+      config: Debug
+  BenchZero:
+    build:
+      targets:
+        BenchZero: all
+    run:
+      config: Debug

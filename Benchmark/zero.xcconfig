@@ -1,0 +1,5 @@
+// Placeholder for the BenchZero target.
+//
+// scripts/bench-sample.sh (or make-zero-xcconfig.sh) overwrites this file with
+// the -force_load flags for a packaged HotSpot Zero runtime. BenchOpenJ9 does
+// not read it, so an empty file is fine unless you build BenchZero.
