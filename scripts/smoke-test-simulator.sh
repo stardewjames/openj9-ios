@@ -108,7 +108,11 @@ fi
 xcrun simctl install "$UDID" "$APP"
 
 # Python supplies a real deadline on stock macOS (which has no GNU timeout).
-SIMCTL_CHILD_OPENJ9_SMOKE_EXIT=1 SIMCTL_CHILD_OPENJ9_SMOKE_DESKTOP="$OPENJ9_SMOKE_DESKTOP" SIMCTL_CHILD_OPENJ9_SMOKE_BENCH="${BENCH:-0}" python3 - "$TIMEOUT" "$UDID" "$BUNDLE_ID" <<'PY' 2>&1 | tee "$LOG"
+set +e
+SIMCTL_CHILD_OPENJ9_SMOKE_EXIT=1 SIMCTL_CHILD_OPENJ9_SMOKE_DESKTOP="$OPENJ9_SMOKE_DESKTOP" SIMCTL_CHILD_OPENJ9_SMOKE_BENCH="${BENCH:-0}" \
+SIMCTL_CHILD_OPENJ9_BENCH_ONLY="${OPENJ9_BENCH_ONLY:-}" SIMCTL_CHILD_OPENJ9_BENCH_WARMUP="${OPENJ9_BENCH_WARMUP:-}" \
+SIMCTL_CHILD_OPENJ9_BENCH_REPS="${OPENJ9_BENCH_REPS:-}" SIMCTL_CHILD_OPENJ9_BENCH_REVERSE="${OPENJ9_BENCH_REVERSE:-}" \
+python3 - "$TIMEOUT" "$UDID" "$BUNDLE_ID" <<'PY' 2>&1 | tee "$LOG"
 import os, signal, subprocess, sys
 process = subprocess.Popen(['xcrun', 'simctl', 'launch', '--console-pty', '--terminate-running-process', sys.argv[2], sys.argv[3]], start_new_session=True)
 try:
@@ -123,9 +127,12 @@ except subprocess.TimeoutExpired:
     print('OPENJ9_IOS_SMOKE_FAIL: simulator launch timed out', flush=True)
     sys.exit(124)
 PY
+APP_STATUS=${PIPESTATUS[0]}
+set -e
+echo "app exit status: $APP_STATUS"
 if [[ "$BENCH" == 1 ]]; then
     grep -q '^BENCH_HOST ' "$LOG" || die "benchmark host marker missing (see $LOG)"
-    grep -q '^OPENJ9_IOS_BENCH_OK' "$LOG" || die "benchmark completion marker missing (see $LOG)"
+    grep -q '^OPENJ9_IOS_BENCH_OK' "$LOG" || die "benchmark completion marker missing after $APP_STATUS (see $LOG)"
     echo "=== benchmark results ==="
     grep -E '^(BENCH_HOST|BENCH) ' "$LOG"
 elif [[ "$OPENJ9_SMOKE_DESKTOP" == none ]]; then

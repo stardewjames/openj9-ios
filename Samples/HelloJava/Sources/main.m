@@ -53,6 +53,18 @@ static jint JNICALL HelloNativeAdd(JNIEnv *env, jclass type, jint left, jint rig
         BOOL benchmark = [NSProcessInfo.processInfo.environment[@"OPENJ9_SMOKE_BENCH"] isEqualToString:@"1"];
         // The benchmark mirrors host runs, which use a fixed 512 MiB heap.
         configuration.maxHeap = benchmark ? @"512m" : @"256m";
+        NSMutableArray<NSString *> *options = [NSMutableArray array];
+        NSDictionary<NSString *, NSString *> *environment = NSProcessInfo.processInfo.environment;
+        for (NSArray<NSString *> *mapping in @[@[@"-Dbench.warmupMs=", @"OPENJ9_BENCH_WARMUP"],
+                                               @[@"-Dbench.reps=", @"OPENJ9_BENCH_REPS"],
+                                               @[@"-Dbench.only=", @"OPENJ9_BENCH_ONLY"]]) {
+            NSString *value = environment[mapping[1]];
+            if (value.length) [options addObject:[mapping[0] stringByAppendingString:value]];
+        }
+        if ([environment[@"OPENJ9_BENCH_REVERSE"] isEqualToString:@"1"]) {
+            [options addObject:@"-Dbench.reverse=true"];
+        }
+        configuration.options = options;
         __weak HelloAppDelegate *weakSelf = self;
         configuration.outputHandler = ^(NSString *line, BOOL standardError) {
             (void)standardError;

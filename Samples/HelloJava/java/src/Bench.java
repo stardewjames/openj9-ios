@@ -105,31 +105,41 @@ public final class Bench {
     public static void main(String[] args) {
         int warmupMs = Integer.getInteger("bench.warmupMs", 300);
         int reps = Integer.getInteger("bench.reps", 7);
+        boolean reverse = Boolean.getBoolean("bench.reverse");
+        String only = System.getProperty("bench.only", "");
         System.out.println("BENCH_HOST vm=" + System.getProperty("java.vm.name")
             + " version=" + System.getProperty("java.runtime.version")
             + " os=" + System.getProperty("os.name")
             + " arch=" + System.getProperty("os.arch")
             + " cpus=" + Runtime.getRuntime().availableProcessors()
             + " heap=" + Runtime.getRuntime().maxMemory()
-            + " warmupMs=" + warmupMs + " reps=" + reps);
-        for (int index = 0; index < NAMES.length; index++) {
+            + " warmupMs=" + warmupMs + " reps=" + reps
+            + " reverse=" + reverse + " only=" + (only.isEmpty() ? "-" : only));
+        int[] order = new int[NAMES.length];
+        for (int i = 0; i < order.length; i++) order[i] = reverse ? order.length - 1 - i : i;
+        for (int position : order) {
+            if (!only.isEmpty() && !only.equals(NAMES[position])) continue;
             Bench bench = new Bench();
-            Workload work = workload(bench, index);
-            long deadline = System.nanoTime() + warmupMs * 1_000_000L;
+            Workload work = workload(bench, position);
+            long warmupStart = System.nanoTime();
+            long deadline = warmupStart + warmupMs * 1_000_000L;
             while (System.nanoTime() < deadline) work.run();
-            int batch = BATCH[index];
+            int batch = BATCH[position];
             double[] seconds = new double[reps];
             for (int rep = 0; rep < reps; rep++) {
                 long start = System.nanoTime();
                 for (int i = 0; i < batch; i++) work.run();
-                seconds[rep] = (System.nanoTime() - start) / 1e9 / ((double) batch * OPS[index]);
+                seconds[rep] = (System.nanoTime() - start) / 1e9 / ((double) batch * OPS[position]);
             }
             java.util.Arrays.sort(seconds);
             double median = seconds[reps / 2];
-            double min = seconds[0];
-            double max = seconds[reps - 1];
-            System.out.printf(java.util.Locale.ROOT, "BENCH %s %.3f %.3f %.3f batch=%d%n",
-                NAMES[index], median * 1e9, min * 1e9, max * 1e9, batch);
+            Runtime runtime = Runtime.getRuntime();
+            System.out.printf(java.util.Locale.ROOT,
+                "BENCH %s %.3f %.3f %.3f batch=%d warmupMs=%d mem=%d/%d firstRep=%.3f%n",
+                NAMES[position], median * 1e9, seconds[0] * 1e9, seconds[reps - 1] * 1e9, batch,
+                (System.nanoTime() - warmupStart) / 1_000_000L,
+                (runtime.totalMemory() - runtime.freeMemory()) >> 20, runtime.totalMemory() >> 20,
+                seconds[0] * 1e9);
         }
         System.out.println("OPENJ9_IOS_BENCH_OK");
         System.out.flush();

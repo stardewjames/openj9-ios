@@ -212,6 +212,9 @@ jobs:
         if: matrix.desktop == 'headless'
         env:
           HOST_JAVA_HOME: ${{ env.SEMERU_HOME }}
+          OPENJ9_BENCH_REVERSE: '1'
+          OPENJ9_BENCH_WARMUP: '1000'
+          OPENJ9_BENCH_REPS: '5'
         run: |
           work/sdk-smoke/OpenJ9/scripts/smoke-test-simulator.sh --bench --out "$PWD/work/bench"
 
