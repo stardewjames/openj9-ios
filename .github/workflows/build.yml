@@ -28,7 +28,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.zero_baseline && 'zero' || inputs.benchmark && 'bench' || 'ci' }}
   cancel-in-progress: true
 
 jobs:
@@ -286,7 +286,7 @@ jobs:
           [[ -n "$ZERO_BIN" ]] || { echo "no built java" >&2; exit 1; }
           "$ZERO_BIN" -version
           "$ZERO_BIN" -Xint -XX:-UseCompressedOops -XX:-UseCompressedClassPointers \
-            -cp work/zero-classes Bench | tee work/zero-bench.txt
+            -Xms512m -Xmx512m -cp work/zero-classes Bench | tee work/zero-bench.txt
 
       - name: Upload baseline
         if: always()
