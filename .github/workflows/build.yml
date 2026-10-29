@@ -335,7 +335,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: third_party/moeReader/SuwayomiHost/runtime
-          key: zero-sim-runtime-${{ env.MOERADER_COMMIT }}
+          key: zero-sim-runtime-${{ env.MOERADER_COMMIT }}-v2
 
       - uses: actions/setup-java@v4
         if: steps.runtime.outputs.cache-hit != 'true'
@@ -352,6 +352,36 @@ jobs:
         if: steps.runtime.outputs.cache-hit != 'true'
         working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
         run: ./build-openjdk-macos.sh
+
+      # iOS denies PROT_EXEC on anonymous memory, so HotSpot's code-heap commit
+      # fails before the VM starts ("Could not reserve enough space in CodeCache").
+      # Zero executes no generated code, so the heap is committed read/write only.
+      - name: Make iOS code heaps non-executable
+        if: steps.runtime.outputs.cache-hit != 'true'
+        working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys
+          path = pathlib.Path("work/mobile/src/hotspot/os/bsd/os_bsd.cpp")
+          text = path.read_text()
+          if "zero-ios-bench" in text:
+              print("already patched")
+              sys.exit(0)
+          anchor = "  int prot = exec ? PROT_READ|PROT_WRITE|PROT_EXEC : PROT_READ|PROT_WRITE;"
+          if anchor not in text:
+              sys.exit("os_bsd.cpp commit-memory anchor not found")
+          replacement = (
+              "#ifdef __IOS__\n"
+              "  // zero-ios-bench: iOS rejects PROT_EXEC on anonymous memory and\n"
+              "  // Zero never executes generated code, so code heaps stay read/write.\n"
+              "  int prot = PROT_READ|PROT_WRITE;\n"
+              "#else\n"
+              + anchor + "\n"
+              "#endif"
+          )
+          path.write_text(text.replace(anchor, replacement, 1))
+          print("patched", path)
+          PY
 
       - name: Build HotSpot Zero for the Simulator
         if: steps.runtime.outputs.cache-hit != 'true'
