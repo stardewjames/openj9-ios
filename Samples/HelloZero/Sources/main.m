@@ -46,6 +46,7 @@ static void runBenchmark(void) {
         {(char *)"-Xss4m", NULL},
         {(char *)"-XX:+DisableAttachMechanism", NULL},
         {(char *)"-XX:-UsePerfData", NULL},
+        {(char *)"-Xlog:os+map=trace", NULL},
     };
     fprintf(stderr, "ZERO_IOS_START jar=%s home=%s\n", jar.UTF8String, javaHome.UTF8String);
     fflush(stderr);

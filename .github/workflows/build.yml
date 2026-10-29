@@ -37,6 +37,7 @@ concurrency:
 
 jobs:
   swift-api:
+    if: ${{ !inputs.zero_ios }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +58,7 @@ jobs:
 
   jdk:
     name: jdk (${{ matrix.sdk }}, ${{ matrix.desktop }})
+    if: ${{ !inputs.zero_ios }}
     runs-on: macos-15
     timeout-minutes: 360
     strategy:
@@ -152,7 +154,7 @@ jobs:
 
   package:
     needs: jdk
-    if: ${{ !inputs.configure_only }}
+    if: ${{ !inputs.configure_only && !inputs.zero_ios }}
     runs-on: macos-15
     name: package (${{ matrix.desktop }})
     strategy:
