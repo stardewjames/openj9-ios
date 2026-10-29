@@ -23,12 +23,16 @@ on:
         description: Run the Simulator benchmark (two passes, opposite order)
         type: boolean
         default: false
+      zero_ios:
+        description: Build HotSpot Zero for the iOS Simulator (moeReader source) and benchmark it
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.zero_baseline && 'zero' || inputs.benchmark && 'bench' || 'ci' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.zero_ios && 'zeroios' || inputs.zero_baseline && 'zero' || inputs.benchmark && 'bench' || 'ci' }}
   cancel-in-progress: true
 
 jobs:
@@ -297,6 +301,98 @@ jobs:
         with:
           name: zero-baseline
           path: work/zero-bench.txt
+          if-no-files-found: ignore
+
+  zero-ios-build:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.zero_ios }}
+    runs-on: macos-26
+    timeout-minutes: 360
+    env:
+      MOERADER_COMMIT: cbceaaa24474f856e877aa76acf8535921b1bb74
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          brew install autoconf make
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      # The Zero port itself (scripts, pinned sources, libffi) lives in moeReader.
+      - name: Fetch the pinned Zero build scripts
+        run: |
+          git init -q third_party/moeReader
+          git -C third_party/moeReader remote add origin https://github.com/stardewjames/moeReader
+          git -C third_party/moeReader fetch -q --depth 1 origin "$MOERADER_COMMIT"
+          git -C third_party/moeReader checkout -q FETCH_HEAD -- SuwayomiHost/jvm-ios SuwayomiHost/jvm-options
+          chmod +x third_party/moeReader/SuwayomiHost/jvm-ios/*.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "26"
+
+      - name: Fetch OpenJDK Mobile sources
+        working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
+        run: ./fetch-openjdk.sh
+
+      - name: Build the macOS host JDK
+        working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
+        run: ./build-openjdk-macos.sh
+
+      - name: Build HotSpot Zero for the Simulator
+        working-directory: third_party/moeReader/SuwayomiHost/jvm-ios
+        run: ./build-openjdk-ios.sh iphonesimulator
+
+      - name: Package the runtime
+        working-directory: third_party/moeReader/SuwayomiHost
+        run: |
+          # package.sh only copies the host jar; a stub satisfies it because this
+          # benchmark supplies its own Java entry point.
+          mkdir -p host/build/libs /tmp/empty-jar
+          jar --create --file host/build/libs/suwayomi-host.jar -C /tmp/empty-jar .
+          SKIP_HOST_BUILD=1 OUT="$PWD/runtime" ./jvm-ios/package.sh
+          ls "$PWD/runtime/native/iphonesimulator" | head
+
+      - name: Upload the packaged runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: zero-sim-runtime
+          path: third_party/moeReader/SuwayomiHost/runtime
+          if-no-files-found: error
+
+  zero-ios-bench:
+    needs: zero-ios-build
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.zero_ios }}
+    # The Zero simulator slice targets iOS 26, so it must be linked and run with
+    # an Xcode whose SDK is at least as new.
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: brew install xcodegen
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: zero-sim-runtime
+          path: work/zero-sim-runtime
+
+      - name: Run the benchmark in the Simulator
+        run: |
+          scripts/bench-zero-sim.sh --runtime work/zero-sim-runtime --out "$PWD/work/bench-zero"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zero-sim-bench-logs
+          path: work/bench-zero
           if-no-files-found: ignore
 
   release:

@@ -4,6 +4,9 @@
 /Artifacts/
 /Samples/HelloJava/*.xcodeproj/
 /Samples/HelloJava/build/
+/Samples/HelloZero/*.xcodeproj/
+/Samples/HelloZero/zero-runtime.xcconfig
+/third_party/
 .DS_Store
 .build/
 .swiftpm/
