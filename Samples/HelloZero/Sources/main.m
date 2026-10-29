@@ -6,6 +6,7 @@
 // `simctl launch --console-pty` relays.
 #import <UIKit/UIKit.h>
 #include <jni.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -92,6 +93,12 @@ static void runBenchmark(void) {
 @property (nonatomic, strong) UIWindow *window;
 @end
 
+static void *ZeroStartupThread(void *context) {
+    (void)context;
+    @autoreleasepool { runBenchmark(); }
+    return NULL;
+}
+
 @implementation ZeroAppDelegate
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     (void)application;
@@ -99,9 +106,18 @@ static void runBenchmark(void) {
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     self.window.rootViewController = [UIViewController new];
     [self.window makeKeyAndVisible];
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        @autoreleasepool { runBenchmark(); }
-    });
+    // HotSpot takes over the thread that creates it and uses its stack for VM
+    // startup; a GCD worker stack is far too small for that.
+    pthread_attr_t attributes;
+    pthread_t thread;
+    int status = pthread_attr_init(&attributes);
+    if (!status) {
+        status = pthread_attr_setstacksize(&attributes, 16 * 1024 * 1024);
+        if (!status) status = pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+        if (!status) status = pthread_create(&thread, &attributes, ZeroStartupThread, NULL);
+        pthread_attr_destroy(&attributes);
+    }
+    if (status) report([NSString stringWithFormat:@"could not start the VM thread (%d)", status]);
     return YES;
 }
 @end
