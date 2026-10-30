@@ -45,10 +45,16 @@ use a clean install to compare fresh databases.
 For a signed physical device build, generate `Benchmark.xcodeproj` with
 `xcodegen generate --spec Benchmark/project.yml --project Benchmark`, set
 `SUWAYOMI_JAR` to the absolute jar path as a build setting, and select a signed
-device. Set `BENCH_MODE` and the desired knobs as environment variables in the
-scheme's Run action before launching from Xcode. Keep the app foregrounded and
-the device unlocked throughout; iOS can suspend background work. No server is
-exposed beyond loopback by the benchmark's server configuration.
+device. Install the app, choose **Suwayomi stress** or **Suwayomi idle** in its
+Test menu, and tap **Run**. Set `BENCH_DURATION` and the other knobs as
+environment variables in the scheme's Run action before launching; they are read
+when the app creates the JVM on the first Run. A Suwayomi server starts once per
+app launch: terminate and relaunch the app to measure a fresh startup, and use
+the app to run the non-server modes as often as needed. Keep the app foregrounded
+and the device unlocked throughout; iOS can suspend background work. Use
+**Export / upload** to capture the console, including server startup errors and
+logs, plus device/build details and any JVM crash logs. No server is exposed
+beyond loopback by the benchmark's server configuration.
 
 ## Results and interpretation
 

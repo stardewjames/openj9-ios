@@ -22,9 +22,32 @@ Benchmark/run.sh zero --mode all
 `run.sh` builds the app, boots a disposable arm64 Simulator, streams the app's
 console, and prints the result lines. `--mode bench` skips compatibility probes,
 `--mode compat` skips timings. Logs land in `Benchmark/build/simulator-<runtime>/`.
+The runner sets `BENCH_AUTORUN=1`, which makes the app start the requested mode
+on launch and exit when it finishes.
 
-The same apps run on a device: open `Benchmark/project.yml` with XcodeGen
-(`xcodegen generate`) and use your normal signing.
+Launched normally, the app is interactive. It shows a **Test** menu (all,
+benchmarks, compatibility, idle, Suwayomi stress, Suwayomi idle), a **Run**
+button, the live output, **Clear** and **Export / upload**. The JVM is created on
+the first Run and reused by later benchmark runs; a Suwayomi server can only be
+started once per app launch, so terminate and relaunch the app for a fresh
+server run. Keep the app in the foreground while a run is active.
+
+**Export / upload** writes one `ios-bench-<runtime>-<mode>-<timestamp>.txt`
+report and opens the system share sheet (Files, AirDrop, Mail, any installed
+upload target). The report contains the console, run metadata, device and OS
+details, app build information, bundled artifact paths and sizes, the selected
+`BENCH_*`/`SUWAYOMI_*` values, any JVM `hs_err_*.log` crash logs, and the names
+and sizes of any javacore/Snap/core dump files in the app's temporary directory.
+It does not include the full process environment. Exporting before a run still
+works and captures the current debug state; review the report header before
+uploading.
+
+To run on a device, open `Benchmark/project.yml` with XcodeGen
+(`xcodegen generate`), sign with your normal team, install the app, and tap Run.
+Build-time knobs (`SUWAYOMI_JAR`) and launch-time knobs (`BENCH_WARMUP`,
+`BENCH_REPS`, `BENCH_DURATION`, ...) are read when the app creates the JVM on the
+first Run, so set them in the scheme's Run action (or with `simctl`) before
+launching.
 
 Full CI runs compile `BenchOpenJ9` for the arm64 iOS Simulator using the
 headless SDK artifact produced by the packaging job, Java 21 and XcodeGen.
@@ -51,7 +74,9 @@ BENCH_OK
   is better; `checksum` proves both runtimes computed the same thing.
 
 Harness knobs (environment, passed through `simctl` as `SIMCTL_CHILD_*`):
-`BENCH_MODE`, `BENCH_WARMUP` (ms, default 400), `BENCH_REPS` (default 5).
+`BENCH_MODE` (initial or automatic mode), `BENCH_AUTORUN` (`1` starts and exits
+without waiting for a tap), `BENCH_WARMUP` (ms, default 400), `BENCH_REPS`
+(default 5).
 
 ## Two targets, one source tree
 

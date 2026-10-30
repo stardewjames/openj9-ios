@@ -54,6 +54,9 @@ for key in BENCH_WARMUP BENCH_REPS BENCH_DURATION BENCH_SAMPLE_INTERVAL SUWAYOMI
     if [[ -n "${!key:-}" ]]; then export "SIMCTL_CHILD_$key=${!key}"; fi
 done
 export BENCH_MODE="$MODE"
+# The app shows an interactive UI when launched normally; automation mode
+# starts BENCH_MODE immediately and exits with the run status.
+export SIMCTL_CHILD_BENCH_AUTORUN=1
 
 for tool in xcrun xcodebuild xcodegen python3; do
     command -v "$tool" >/dev/null 2>&1 || { echo "required tool not found: $tool" >&2; exit 1; }
